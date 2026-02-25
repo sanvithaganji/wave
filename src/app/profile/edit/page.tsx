@@ -2,12 +2,11 @@
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { doc, setDoc } from 'firebase/firestore';
-import { db } from '@/lib/firebase';
 import { useAuth } from '@/context/AuthContext';
 import { generateCodeName } from '@/lib/codenames';
 import { motion } from 'framer-motion';
 import { UserProfile } from '@/lib/types';
+import { calculateScore } from '@/lib/scoreUtils';
 
 export default function EditProfilePage() {
   const { user, profile, loading, refreshProfile } = useAuth();
@@ -81,12 +80,15 @@ export default function EditProfilePage() {
     setSaving(true);
 
     try {
+      const token = localStorage.getItem('waves_token');
+      if (!token) { router.push('/auth'); return; }
+
       const codeName = profile?.codeName || generateCodeName();
       const userData: UserProfile = {
         uid: user.uid,
         codeName,
         email: form.email,
-        phone: user.phoneNumber || '',
+        phone: '',
         realName: form.realName,
         techSkills: form.techSkills.filter(Boolean),
         nonTechSkills: form.nonTechSkills.filter(Boolean),
@@ -108,7 +110,7 @@ export default function EditProfilePage() {
         college: form.college,
         aboutMe: form.aboutMe,
         rating: profile?.rating || 5.0,
-        score: profile?.score || 0,
+        score: 0, // placeholder — calculated below
         reports: profile?.reports || [],
         dateJoined: profile?.dateJoined || new Date().toISOString(),
         isActive: true,
@@ -116,9 +118,26 @@ export default function EditProfilePage() {
         profileCompleted: true,
       };
 
-      await setDoc(doc(db, 'users', user.uid), userData);
+      userData.score = calculateScore(userData);
+
+      const res = await fetch(`/api/users/${user.uid}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify(userData),
+      });
+
+      if (!res.ok) {
+        const data = await res.json();
+        console.error('Error saving profile:', data.error);
+        return;
+      }
+
       await refreshProfile();
-      router.push('/swipe');
+      const isFirstTime = !profile?.interviewCompleted;
+      router.push(isFirstTime ? '/interview' : '/swipe');
     } catch (error) {
       console.error('Error saving profile:', error);
     } finally {
@@ -140,48 +159,55 @@ export default function EditProfilePage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-white">
+      <div style={{ height: '100vh', background: 'var(--black)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
         <motion.div
           animate={{ rotate: 360 }}
           transition={{ repeat: Infinity, duration: 1, ease: 'linear' }}
-          className="w-8 h-8 border-2 border-black border-t-transparent rounded-full"
+          style={{ width: 32, height: 32, border: '2px solid var(--subtle)', borderTopColor: 'transparent', borderRadius: '50%' }}
         />
       </div>
     );
   }
 
+  const labelStyle = { fontSize: 10, textTransform: 'uppercase' as const, letterSpacing: 1.5, color: 'var(--muted)', marginBottom: 8, fontWeight: 500, display: 'block' };
+  const inputStyle = {
+    width: '100%', background: 'var(--dark)', border: '1px solid var(--border)',
+    borderRadius: 10, padding: '12px 16px', color: 'var(--white)',
+    fontSize: 14, fontFamily: 'var(--sans)', outline: 'none', transition: 'border-color 0.2s'
+  };
+
   return (
-    <div className="min-h-screen bg-white">
+    <div style={{
+      minHeight: '100vh', background: 'var(--black)', color: 'var(--white)',
+      fontFamily: 'var(--sans)'
+    }}>
       {/* Header */}
-      <div className="sticky top-0 bg-white/90 backdrop-blur-lg z-10 border-b border-gray-100">
-        <div className="max-w-lg mx-auto px-6 py-4">
-          <h1 className="text-xl font-bold tracking-tight">
-            {profile?.profileCompleted ? 'Edit Profile' : 'Create Profile'}
+      <div style={{ position: 'sticky', top: 0, background: 'var(--black)', zIndex: 10, borderBottom: '1px solid var(--border)' }}>
+        <div style={{ maxWidth: 430, margin: '0 auto', padding: '24px 24px 16px' }}>
+          <h1 style={{ fontSize: 28, fontWeight: 700, color: 'var(--pure)', letterSpacing: -0.5, marginBottom: 4 }}>
+            {profile?.profileCompleted ? 'Edit Profile' : 'Onboarding'}
           </h1>
-          <p className="text-xs text-gray-400 mt-0.5">
+          <p style={{ fontSize: 13, color: 'var(--subtle)' }}>
             {steps[currentStep].subtitle}
           </p>
-        </div>
-        {/* Progress bar */}
-        <div className="max-w-lg mx-auto px-6 pb-3 flex gap-1.5">
-          {steps.map((_, i) => (
-            <motion.div
-              key={i}
-              className={`h-1 flex-1 rounded-full ${
-                i <= currentStep ? 'bg-black' : 'bg-gray-200'
-              }`}
-              initial={false}
-              animate={{
-                backgroundColor: i <= currentStep ? '#000' : '#e5e7eb',
-              }}
-              transition={{ duration: 0.3 }}
-            />
-          ))}
+
+          {/* Progress bar */}
+          <div style={{ display: 'flex', gap: 6, marginTop: 20 }}>
+            {steps.map((_, i) => (
+              <motion.div
+                key={i}
+                style={{ height: 4, flex: 1, borderRadius: 2 }}
+                initial={false}
+                animate={{ backgroundColor: i <= currentStep ? 'var(--pure)' : 'var(--dark)' }}
+                transition={{ duration: 0.3 }}
+              />
+            ))}
+          </div>
         </div>
       </div>
 
       {/* Form Steps */}
-      <div className="max-w-lg mx-auto px-6 py-6 pb-32 overflow-y-auto" style={{ maxHeight: 'calc(100dvh - 120px)' }}>
+      <div style={{ maxWidth: 430, margin: '0 auto', padding: '24px', paddingBottom: 120 }}>
         <motion.div
           key={currentStep}
           initial={{ opacity: 0, x: 20 }}
@@ -191,84 +217,83 @@ export default function EditProfilePage() {
         >
           {/* Step 0: Basics */}
           {currentStep === 0 && (
-            <div className="space-y-5">
-              <p className="text-xs text-gray-400 mb-4">
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+              <p style={{ fontSize: 13, color: 'var(--subtle)', marginBottom: 4 }}>
                 This info is kept private and never shown to other users.
               </p>
               <div>
-                <label className="text-xs font-bold uppercase tracking-widest text-gray-400 mb-1.5 block">
-                  Full Name
-                </label>
+                <label style={labelStyle}>Full Name</label>
                 <input
                   type="text"
                   value={form.realName}
                   onChange={(e) => setForm({ ...form, realName: e.target.value })}
                   placeholder="Your real name (hidden)"
-                  className="w-full px-4 py-3 border border-gray-200 rounded-xl text-sm focus:border-black transition-colors"
+                  style={inputStyle}
+                  onFocus={e => e.target.style.borderColor = 'var(--subtle)'}
+                  onBlur={e => e.target.style.borderColor = 'var(--border)'}
                 />
               </div>
               <div>
-                <label className="text-xs font-bold uppercase tracking-widest text-gray-400 mb-1.5 block">
-                  Email
-                </label>
+                <label style={labelStyle}>Email</label>
                 <input
                   type="email"
                   value={form.email}
                   onChange={(e) => setForm({ ...form, email: e.target.value })}
                   placeholder="your@email.com (hidden)"
-                  className="w-full px-4 py-3 border border-gray-200 rounded-xl text-sm focus:border-black transition-colors"
+                  style={inputStyle}
+                  onFocus={e => e.target.style.borderColor = 'var(--subtle)'}
+                  onBlur={e => e.target.style.borderColor = 'var(--border)'}
                 />
               </div>
               <div>
-                <label className="text-xs font-bold uppercase tracking-widest text-gray-400 mb-1.5 block">
-                  Age
-                </label>
+                <label style={labelStyle}>Age</label>
                 <input
                   type="number"
                   value={form.age}
                   onChange={(e) => setForm({ ...form, age: parseInt(e.target.value) || 18 })}
-                  min={16}
-                  max={60}
-                  className="w-full px-4 py-3 border border-gray-200 rounded-xl text-sm focus:border-black transition-colors"
+                  min={16} max={60}
+                  style={inputStyle}
+                  onFocus={e => e.target.style.borderColor = 'var(--subtle)'}
+                  onBlur={e => e.target.style.borderColor = 'var(--border)'}
                 />
               </div>
               <div>
-                <label className="text-xs font-bold uppercase tracking-widest text-gray-400 mb-1.5 block">
-                  Role
-                </label>
-                <div className="flex gap-3">
+                <label style={labelStyle}>Role</label>
+                <div style={{ display: 'flex', gap: 12 }}>
                   <button
                     onClick={() => setForm({ ...form, isStudent: true })}
-                    className={`flex-1 py-3 rounded-xl text-sm font-semibold transition-all ${
-                      form.isStudent
-                        ? 'bg-black text-white'
-                        : 'border border-gray-200 text-gray-500'
-                    }`}
+                    style={{
+                      flex: 1, padding: '14px', borderRadius: 10, fontSize: 13, fontWeight: 600,
+                      fontFamily: 'var(--sans)', cursor: 'pointer', transition: 'all 0.2s', border: 'none',
+                      background: form.isStudent ? 'var(--pure)' : 'var(--dark)',
+                      color: form.isStudent ? 'var(--black)' : 'var(--subtle)'
+                    }}
                   >
                     Student
                   </button>
                   <button
                     onClick={() => setForm({ ...form, isStudent: false })}
-                    className={`flex-1 py-3 rounded-xl text-sm font-semibold transition-all ${
-                      !form.isStudent
-                        ? 'bg-black text-white'
-                        : 'border border-gray-200 text-gray-500'
-                    }`}
+                    style={{
+                      flex: 1, padding: '14px', borderRadius: 10, fontSize: 13, fontWeight: 600,
+                      fontFamily: 'var(--sans)', cursor: 'pointer', transition: 'all 0.2s', border: 'none',
+                      background: !form.isStudent ? 'var(--pure)' : 'var(--dark)',
+                      color: !form.isStudent ? 'var(--black)' : 'var(--subtle)'
+                    }}
                   >
                     Professional
                   </button>
                 </div>
               </div>
               <div>
-                <label className="text-xs font-bold uppercase tracking-widest text-gray-400 mb-1.5 block">
-                  College / Organization
-                </label>
+                <label style={labelStyle}>College / Organization</label>
                 <input
                   type="text"
                   value={form.college}
                   onChange={(e) => setForm({ ...form, college: e.target.value })}
                   placeholder="Your college or organization"
-                  className="w-full px-4 py-3 border border-gray-200 rounded-xl text-sm focus:border-black transition-colors"
+                  style={inputStyle}
+                  onFocus={e => e.target.style.borderColor = 'var(--subtle)'}
+                  onBlur={e => e.target.style.borderColor = 'var(--border)'}
                 />
               </div>
             </div>
@@ -276,37 +301,33 @@ export default function EditProfilePage() {
 
           {/* Step 1: Skills */}
           {currentStep === 1 && (
-            <div className="space-y-5">
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
               <div>
-                <label className="text-xs font-bold uppercase tracking-widest text-gray-400 mb-3 block">
-                  Tech Skills (up to 5)
-                </label>
-                <div className="space-y-2">
+                <label style={labelStyle}>Tech Skills (up to 5)</label>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                   {form.techSkills.map((skill, i) => (
                     <input
-                      key={i}
-                      type="text"
-                      value={skill}
+                      key={i} type="text" value={skill}
                       onChange={(e) => updateTechSkill(i, e.target.value)}
                       placeholder={`Tech skill ${i + 1}`}
-                      className="w-full px-4 py-3 border border-gray-200 rounded-xl text-sm focus:border-black transition-colors"
+                      style={inputStyle}
+                      onFocus={e => e.target.style.borderColor = 'var(--subtle)'}
+                      onBlur={e => e.target.style.borderColor = 'var(--border)'}
                     />
                   ))}
                 </div>
               </div>
               <div>
-                <label className="text-xs font-bold uppercase tracking-widest text-gray-400 mb-3 block">
-                  Non-Tech Skills (up to 3)
-                </label>
-                <div className="space-y-2">
+                <label style={labelStyle}>Non-Tech Skills (up to 3)</label>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                   {form.nonTechSkills.map((skill, i) => (
                     <input
-                      key={i}
-                      type="text"
-                      value={skill}
+                      key={i} type="text" value={skill}
                       onChange={(e) => updateNonTechSkill(i, e.target.value)}
                       placeholder={`Non-tech skill ${i + 1}`}
-                      className="w-full px-4 py-3 border border-gray-200 rounded-xl text-sm focus:border-black transition-colors"
+                      style={inputStyle}
+                      onFocus={e => e.target.style.borderColor = 'var(--subtle)'}
+                      onBlur={e => e.target.style.borderColor = 'var(--border)'}
                     />
                   ))}
                 </div>
@@ -316,94 +337,84 @@ export default function EditProfilePage() {
 
           {/* Step 2: Experience */}
           {currentStep === 2 && (
-            <div className="space-y-5">
-              <div className="grid grid-cols-2 gap-3">
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
                 <div>
-                  <label className="text-xs font-bold uppercase tracking-widest text-gray-400 mb-1.5 block">
-                    CGPA
-                  </label>
+                  <label style={labelStyle}>CGPA</label>
                   <input
-                    type="number"
-                    step="0.1"
-                    value={form.cgpa}
+                    type="number" step="0.1" value={form.cgpa}
                     onChange={(e) => setForm({ ...form, cgpa: parseFloat(e.target.value) || 0 })}
-                    placeholder="8.5"
-                    min={0}
-                    max={10}
-                    className="w-full px-4 py-3 border border-gray-200 rounded-xl text-sm focus:border-black transition-colors"
+                    placeholder="8.5" min={0} max={10}
+                    style={inputStyle}
+                    onFocus={e => e.target.style.borderColor = 'var(--subtle)'}
+                    onBlur={e => e.target.style.borderColor = 'var(--border)'}
                   />
                 </div>
                 <div>
-                  <label className="text-xs font-bold uppercase tracking-widest text-gray-400 mb-1.5 block">
-                    Papers
-                  </label>
+                  <label style={labelStyle}>Papers</label>
                   <input
-                    type="number"
-                    value={form.papers}
+                    type="number" value={form.papers}
                     onChange={(e) => setForm({ ...form, papers: parseInt(e.target.value) || 0 })}
                     min={0}
-                    className="w-full px-4 py-3 border border-gray-200 rounded-xl text-sm focus:border-black transition-colors"
+                    style={inputStyle}
+                    onFocus={e => e.target.style.borderColor = 'var(--subtle)'}
+                    onBlur={e => e.target.style.borderColor = 'var(--border)'}
                   />
                 </div>
                 <div>
-                  <label className="text-xs font-bold uppercase tracking-widest text-gray-400 mb-1.5 block">
-                    Patents
-                  </label>
+                  <label style={labelStyle}>Patents</label>
                   <input
-                    type="number"
-                    value={form.patents}
+                    type="number" value={form.patents}
                     onChange={(e) => setForm({ ...form, patents: parseInt(e.target.value) || 0 })}
                     min={0}
-                    className="w-full px-4 py-3 border border-gray-200 rounded-xl text-sm focus:border-black transition-colors"
+                    style={inputStyle}
+                    onFocus={e => e.target.style.borderColor = 'var(--subtle)'}
+                    onBlur={e => e.target.style.borderColor = 'var(--border)'}
                   />
                 </div>
               </div>
               <div>
-                <label className="text-xs font-bold uppercase tracking-widest text-gray-400 mb-1.5 block">
-                  Competitions (comma separated)
-                </label>
+                <label style={labelStyle}>Competitions (comma separated)</label>
                 <input
-                  type="text"
-                  value={form.competitions}
+                  type="text" value={form.competitions}
                   onChange={(e) => setForm({ ...form, competitions: e.target.value })}
                   placeholder="Smart India Hackathon, Google DSC"
-                  className="w-full px-4 py-3 border border-gray-200 rounded-xl text-sm focus:border-black transition-colors"
+                  style={inputStyle}
+                  onFocus={e => e.target.style.borderColor = 'var(--subtle)'}
+                  onBlur={e => e.target.style.borderColor = 'var(--border)'}
                 />
               </div>
               <div>
-                <label className="text-xs font-bold uppercase tracking-widest text-gray-400 mb-1.5 block">
-                  Certifications (comma separated)
-                </label>
+                <label style={labelStyle}>Certifications (comma separated)</label>
                 <input
-                  type="text"
-                  value={form.certifications}
+                  type="text" value={form.certifications}
                   onChange={(e) => setForm({ ...form, certifications: e.target.value })}
                   placeholder="AWS, Google Cloud, etc."
-                  className="w-full px-4 py-3 border border-gray-200 rounded-xl text-sm focus:border-black transition-colors"
+                  style={inputStyle}
+                  onFocus={e => e.target.style.borderColor = 'var(--subtle)'}
+                  onBlur={e => e.target.style.borderColor = 'var(--border)'}
                 />
               </div>
               <div>
-                <label className="text-xs font-bold uppercase tracking-widest text-gray-400 mb-1.5 block">
-                  Internships (comma separated)
-                </label>
+                <label style={labelStyle}>Internships (comma separated)</label>
                 <input
-                  type="text"
-                  value={form.internships}
+                  type="text" value={form.internships}
                   onChange={(e) => setForm({ ...form, internships: e.target.value })}
                   placeholder="Google, Microsoft, Startup XYZ"
-                  className="w-full px-4 py-3 border border-gray-200 rounded-xl text-sm focus:border-black transition-colors"
+                  style={inputStyle}
+                  onFocus={e => e.target.style.borderColor = 'var(--subtle)'}
+                  onBlur={e => e.target.style.borderColor = 'var(--border)'}
                 />
               </div>
               <div>
-                <label className="text-xs font-bold uppercase tracking-widest text-gray-400 mb-1.5 block">
-                  Hackathons (comma separated)
-                </label>
+                <label style={labelStyle}>Hackathons (comma separated)</label>
                 <input
-                  type="text"
-                  value={form.hackathons}
+                  type="text" value={form.hackathons}
                   onChange={(e) => setForm({ ...form, hackathons: e.target.value })}
                   placeholder="HackMIT, ETHIndia, etc."
-                  className="w-full px-4 py-3 border border-gray-200 rounded-xl text-sm focus:border-black transition-colors"
+                  style={inputStyle}
+                  onFocus={e => e.target.style.borderColor = 'var(--subtle)'}
+                  onBlur={e => e.target.style.borderColor = 'var(--border)'}
                 />
               </div>
             </div>
@@ -411,8 +422,8 @@ export default function EditProfilePage() {
 
           {/* Step 3: Portfolio (Hidden) */}
           {currentStep === 3 && (
-            <div className="space-y-5">
-              <p className="text-xs text-gray-400 mb-2">
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+              <p style={{ fontSize: 13, color: 'var(--subtle)', marginBottom: 4 }}>
                 These links are hidden and only used to calculate your score.
               </p>
               {[
@@ -423,15 +434,15 @@ export default function EditProfilePage() {
                 { label: 'HackerRank', key: 'hackerrank', placeholder: 'hackerrank.com/username' },
               ].map((field) => (
                 <div key={field.key}>
-                  <label className="text-xs font-bold uppercase tracking-widest text-gray-400 mb-1.5 block">
-                    {field.label}
-                  </label>
+                  <label style={labelStyle}>{field.label}</label>
                   <input
                     type="url"
                     value={form[field.key as keyof typeof form] as string}
                     onChange={(e) => setForm({ ...form, [field.key]: e.target.value })}
                     placeholder={field.placeholder}
-                    className="w-full px-4 py-3 border border-gray-200 rounded-xl text-sm focus:border-black transition-colors"
+                    style={inputStyle}
+                    onFocus={e => e.target.style.borderColor = 'var(--subtle)'}
+                    onBlur={e => e.target.style.borderColor = 'var(--border)'}
                   />
                 </div>
               ))}
@@ -440,11 +451,9 @@ export default function EditProfilePage() {
 
           {/* Step 4: About */}
           {currentStep === 4 && (
-            <div className="space-y-5">
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
               <div>
-                <label className="text-xs font-bold uppercase tracking-widest text-gray-400 mb-1.5 block">
-                  About Me (20 words max)
-                </label>
+                <label style={labelStyle}>About Me (20 words max)</label>
                 <textarea
                   value={form.aboutMe}
                   onChange={(e) => {
@@ -454,21 +463,23 @@ export default function EditProfilePage() {
                     }
                   }}
                   placeholder="Passionate developer who loves building things that matter..."
-                  rows={3}
-                  className="w-full px-4 py-3 border border-gray-200 rounded-xl text-sm focus:border-black transition-colors resize-none"
+                  rows={4}
+                  style={{ ...inputStyle, resize: 'none' }}
+                  onFocus={e => e.target.style.borderColor = 'var(--subtle)'}
+                  onBlur={e => e.target.style.borderColor = 'var(--border)'}
                 />
-                <p className="text-[10px] text-gray-400 mt-1">
+                <p style={{ fontSize: 11, color: 'var(--subtle)', marginTop: 8, textAlign: 'right' }}>
                   {form.aboutMe.split(/\s+/).filter(Boolean).length}/20 words
                 </p>
               </div>
-              <div className="bg-gray-50 rounded-xl p-4">
-                <h3 className="text-xs font-bold uppercase tracking-widest text-gray-400 mb-2">
+              <div style={{ background: 'var(--dark)', borderRadius: 12, padding: 20, border: '1px solid var(--border)' }}>
+                <h3 style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: 1.5, color: 'var(--muted)', marginBottom: 8, fontWeight: 700 }}>
                   Your Anonymous Identity
                 </h3>
-                <p className="text-lg font-bold">
-                  {profile?.codeName || '✨ Will be auto-generated'}
+                <p style={{ fontSize: 24, fontWeight: 700, color: 'var(--pure)', marginBottom: 4 }}>
+                  {profile?.codeName || '✨ Auto-generating...'}
                 </p>
-                <p className="text-xs text-gray-500 mt-1">
+                <p style={{ fontSize: 13, color: 'var(--subtle)', lineHeight: 1.5 }}>
                   This code name is your identity on the platform. No one sees your real name.
                 </p>
               </div>
@@ -478,12 +489,21 @@ export default function EditProfilePage() {
       </div>
 
       {/* Bottom Actions */}
-      <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-100 p-4 safe-bottom">
-        <div className="max-w-lg mx-auto flex gap-3">
+      <div style={{
+        position: 'fixed', bottom: 0, left: 0, right: 0, background: 'var(--black)',
+        borderTop: '1px solid var(--border)', padding: '16px 24px', zIndex: 20
+      }}>
+        <div style={{ maxWidth: 430, margin: '0 auto', display: 'flex', gap: 12 }}>
           {currentStep > 0 && (
             <button
               onClick={() => setCurrentStep(currentStep - 1)}
-              className="px-6 py-3 border border-gray-200 rounded-xl text-sm font-semibold transition-colors hover:border-black"
+              style={{
+                padding: '14px 24px', border: '1px solid var(--border)', borderRadius: 12, fontSize: 14,
+                fontWeight: 600, fontFamily: 'var(--sans)', background: 'transparent', color: 'var(--white)',
+                cursor: 'pointer', transition: 'border-color 0.2s'
+              }}
+              onMouseEnter={e => e.currentTarget.style.borderColor = 'var(--subtle)'}
+              onMouseLeave={e => e.currentTarget.style.borderColor = 'var(--border)'}
             >
               Back
             </button>
@@ -491,18 +511,26 @@ export default function EditProfilePage() {
           {currentStep < steps.length - 1 ? (
             <button
               onClick={() => setCurrentStep(currentStep + 1)}
-              className="flex-1 py-3 bg-black text-white rounded-xl text-sm font-semibold"
+              style={{
+                flex: 1, padding: '14px', background: 'var(--pure)', color: 'var(--black)',
+                border: 'none', borderRadius: 12, fontSize: 14, fontWeight: 700,
+                fontFamily: 'var(--sans)', cursor: 'pointer'
+              }}
             >
-              Next
+              Next Step
             </button>
           ) : (
             <motion.button
               whileTap={{ scale: 0.98 }}
               onClick={handleSave}
               disabled={saving}
-              className="flex-1 py-3 bg-black text-white rounded-xl text-sm font-semibold disabled:opacity-50"
+              style={{
+                flex: 1, padding: '14px', background: saving ? 'var(--mid)' : 'var(--pure)', color: 'var(--black)',
+                border: 'none', borderRadius: 12, fontSize: 14, fontWeight: 700,
+                fontFamily: 'var(--sans)', cursor: saving ? 'not-allowed' : 'pointer', opacity: saving ? 0.7 : 1
+              }}
             >
-              {saving ? 'Saving...' : 'Save Profile'}
+              {saving ? 'Saving...' : 'Finish & Enter App 👋'}
             </motion.button>
           )}
         </div>

@@ -1,292 +1,171 @@
 'use client';
 
-import { useState, useRef, useEffect } from 'react';
-import { RecaptchaVerifier, signInWithPhoneNumber, ConfirmationResult } from 'firebase/auth';
-import { auth } from '@/lib/firebase';
-import { useRouter } from 'next/navigation';
-import { motion, AnimatePresence } from 'framer-motion';
+import { useState, useEffect } from 'react';
 import { useAuth } from '@/context/AuthContext';
-
-declare global {
-  interface Window {
-    recaptchaVerifier: RecaptchaVerifier;
-    confirmationResult: ConfirmationResult;
-  }
-}
+import { useRouter } from 'next/navigation';
 
 export default function AuthPage() {
-  const [step, setStep] = useState<'phone' | 'otp'>('phone');
-  const [phone, setPhone] = useState('');
-  const [countryCode, setCountryCode] = useState('+91');
-  const [otp, setOtp] = useState(['', '', '', '', '', '']);
+  const [mode, setMode] = useState<'login' | 'signup'>('login');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  const otpRefs = useRef<(HTMLInputElement | null)[]>([]);
+  const { user, signOut, loading: authLoading } = useAuth();
   const router = useRouter();
-  const { user, profile, loading: authLoading } = useAuth();
 
   useEffect(() => {
+    // If the user visits /auth while already logged in, sign them out
     if (!authLoading && user) {
-      if (profile?.profileCompleted) {
-        router.push('/swipe');
-      } else {
-        router.push('/profile/edit');
-      }
+      signOut();
     }
-  }, [user, profile, authLoading, router]);
+  }, [user, authLoading, signOut]);
 
-  const setupRecaptcha = () => {
-    if (!window.recaptchaVerifier) {
-      window.recaptchaVerifier = new RecaptchaVerifier(auth, 'recaptcha-container', {
-        size: 'invisible',
-        callback: () => {},
+  const handleSubmit = async () => {
+    if (!email || !password) { setError('Please fill in all fields.'); return; }
+    if (password.length < 6) { setError('Password must be at least 6 characters.'); return; }
+    setError('');
+    setLoading(true);
+    try {
+      const endpoint = mode === 'signup' ? '/api/auth/register' : '/api/auth/login';
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password }),
       });
-    }
-  };
+      const data = await res.json();
 
-  const handleSendOtp = async () => {
-    if (phone.length < 10) {
-      setError('Please enter a valid phone number');
-      return;
-    }
-    setError('');
-    setLoading(true);
-
-    try {
-      setupRecaptcha();
-      const fullPhone = `${countryCode}${phone}`;
-      const confirmation = await signInWithPhoneNumber(auth, fullPhone, window.recaptchaVerifier);
-      window.confirmationResult = confirmation;
-      setStep('otp');
-    } catch (err: unknown) {
-      const error = err as { message?: string };
-      setError(error.message || 'Failed to send OTP. Try again.');
-      // Reset recaptcha
-      if (window.recaptchaVerifier) {
-        window.recaptchaVerifier.clear();
-        window.recaptchaVerifier = undefined as unknown as RecaptchaVerifier;
+      if (!res.ok) {
+        setError(data.error || 'Something went wrong. Try again.');
+        return;
       }
+
+      // Save token and reload profile
+      localStorage.setItem('waves_token', data.token);
+      // Trigger a page reload so AuthContext picks up the new token
+      if (mode === 'signup') {
+        router.push('/profile/edit');
+      } else {
+        router.push('/swipe');
+      }
+      // Use location.reload to force AuthContext to re-read from localStorage
+      window.location.href = mode === 'signup' ? '/profile/edit' : '/swipe';
+    } catch (err: any) {
+      setError(err?.message || 'Something went wrong. Try again.');
     } finally {
       setLoading(false);
     }
   };
 
-  const handleOtpChange = (index: number, value: string) => {
-    if (value.length > 1) return;
-    const newOtp = [...otp];
-    newOtp[index] = value;
-    setOtp(newOtp);
-
-    if (value && index < 5) {
-      otpRefs.current[index + 1]?.focus();
-    }
+  const handleKey = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') handleSubmit();
   };
-
-  const handleOtpKeyDown = (index: number, e: React.KeyboardEvent) => {
-    if (e.key === 'Backspace' && !otp[index] && index > 0) {
-      otpRefs.current[index - 1]?.focus();
-    }
-  };
-
-  const handleVerifyOtp = async () => {
-    const code = otp.join('');
-    if (code.length !== 6) {
-      setError('Please enter the complete OTP');
-      return;
-    }
-    setError('');
-    setLoading(true);
-
-    try {
-      await window.confirmationResult.confirm(code);
-      // Auth state change will redirect
-    } catch {
-      setError('Invalid OTP. Please try again.');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  if (authLoading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-white">
-        <motion.div
-          animate={{ rotate: 360 }}
-          transition={{ repeat: Infinity, duration: 1, ease: 'linear' }}
-          className="w-8 h-8 border-2 border-black border-t-transparent rounded-full"
-        />
-      </div>
-    );
-  }
 
   return (
-    <div className="min-h-screen bg-white flex flex-col items-center justify-center p-6">
-      <div id="recaptcha-container" />
-
-      <motion.div
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        className="w-full max-w-sm"
-      >
-        {/* Logo */}
-        <div className="text-center mb-12">
-          <motion.h1
-            initial={{ opacity: 0, scale: 0.9 }}
-            animate={{ opacity: 1, scale: 1 }}
-            transition={{ delay: 0.1 }}
-            className="text-5xl font-black tracking-tighter"
-          >
-            waves
-          </motion.h1>
-          <motion.p
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ delay: 0.3 }}
-            className="text-sm text-gray-400 mt-2 font-medium"
-          >
-            connect · collaborate · create
-          </motion.p>
+    <div style={{
+      height: '100vh', width: '100%', maxWidth: 430, margin: '0 auto',
+      background: 'var(--black)', display: 'flex', flexDirection: 'column',
+      alignItems: 'center', justifyContent: 'center', padding: '0 32px',
+      fontFamily: 'var(--sans)',
+    }}>
+      {/* Logo */}
+      <div style={{ textAlign: 'center', marginBottom: 48 }}>
+        <div style={{ fontSize: 48, letterSpacing: -1, color: 'var(--pure)', lineHeight: 1, fontFamily: 'var(--sans)' }}>
+          wave
         </div>
+        <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 6, letterSpacing: 2, textTransform: 'uppercase' }}>
+          connect · collaborate · create
+        </div>
+      </div>
 
-        <AnimatePresence mode="wait">
-          {step === 'phone' ? (
-            <motion.div
-              key="phone"
-              initial={{ opacity: 0, x: -20 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: 20 }}
-              className="space-y-6"
-            >
-              <div>
-                <label className="text-xs font-bold uppercase tracking-widest text-gray-400 mb-2 block">
-                  Phone Number
-                </label>
-                <div className="flex gap-2">
-                  <select
-                    value={countryCode}
-                    onChange={(e) => setCountryCode(e.target.value)}
-                    className="w-20 px-3 py-3.5 border border-gray-200 rounded-xl text-sm font-medium bg-white"
-                  >
-                    <option value="+91">+91</option>
-                    <option value="+1">+1</option>
-                    <option value="+44">+44</option>
-                    <option value="+61">+61</option>
-                  </select>
-                  <input
-                    type="tel"
-                    value={phone}
-                    onChange={(e) => setPhone(e.target.value.replace(/\D/g, ''))}
-                    placeholder="9876543210"
-                    maxLength={10}
-                    className="flex-1 px-4 py-3.5 border border-gray-200 rounded-xl text-sm font-medium focus:border-black transition-colors"
-                  />
-                </div>
-              </div>
+      {/* Toggle */}
+      <div style={{ display: 'flex', border: '1px solid var(--border)', borderRadius: 12, overflow: 'hidden', marginBottom: 28, width: '100%' }}>
+        <button
+          onClick={() => { setMode('login'); setError(''); }}
+          style={{
+            flex: 1, padding: '11px 0', fontSize: 13, fontWeight: 600, border: 'none', cursor: 'pointer',
+            background: mode === 'login' ? 'var(--pure)' : 'var(--dark)',
+            color: mode === 'login' ? 'var(--black)' : 'var(--subtle)',
+            fontFamily: 'var(--sans)', letterSpacing: 0.5, transition: 'all 0.2s',
+          }}
+        >
+          Sign In
+        </button>
+        <button
+          onClick={() => { setMode('signup'); setError(''); }}
+          style={{
+            flex: 1, padding: '11px 0', fontSize: 13, fontWeight: 600, border: 'none', cursor: 'pointer',
+            background: mode === 'signup' ? 'var(--pure)' : 'var(--dark)',
+            color: mode === 'signup' ? 'var(--black)' : 'var(--subtle)',
+            fontFamily: 'var(--sans)', letterSpacing: 0.5, transition: 'all 0.2s',
+          }}
+        >
+          Create Account
+        </button>
+      </div>
 
-              {error && (
-                <motion.p
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  className="text-xs text-red-500 font-medium"
-                >
-                  {error}
-                </motion.p>
-              )}
+      {/* Email */}
+      <div style={{ width: '100%', marginBottom: 12 }}>
+        <div style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: 1.5, color: 'var(--muted)', marginBottom: 8, fontWeight: 500 }}>Email</div>
+        <input
+          type="email"
+          value={email}
+          onChange={e => setEmail(e.target.value)}
+          onKeyDown={handleKey}
+          placeholder="you@university.edu"
+          style={{
+            width: '100%', background: 'var(--dark)', border: '1px solid var(--border)',
+            borderRadius: 10, padding: '12px 16px', color: 'var(--white)',
+            fontSize: 14, fontFamily: 'var(--sans)', outline: 'none',
+          }}
+          onFocus={e => e.target.style.borderColor = 'var(--subtle)'}
+          onBlur={e => e.target.style.borderColor = 'var(--border)'}
+        />
+      </div>
 
-              <motion.button
-                whileTap={{ scale: 0.98 }}
-                onClick={handleSendOtp}
-                disabled={loading || phone.length < 10}
-                className="w-full py-3.5 bg-black text-white rounded-xl text-sm font-semibold disabled:opacity-40 transition-opacity"
-              >
-                {loading ? (
-                  <motion.span
-                    animate={{ opacity: [1, 0.5, 1] }}
-                    transition={{ repeat: Infinity, duration: 1.5 }}
-                  >
-                    Sending OTP...
-                  </motion.span>
-                ) : (
-                  'Continue'
-                )}
-              </motion.button>
+      {/* Password */}
+      <div style={{ width: '100%', marginBottom: 20 }}>
+        <div style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: 1.5, color: 'var(--muted)', marginBottom: 8, fontWeight: 500 }}>Password</div>
+        <input
+          type="password"
+          value={password}
+          onChange={e => setPassword(e.target.value)}
+          onKeyDown={handleKey}
+          placeholder="••••••••"
+          style={{
+            width: '100%', background: 'var(--dark)', border: '1px solid var(--border)',
+            borderRadius: 10, padding: '12px 16px', color: 'var(--white)',
+            fontSize: 14, fontFamily: 'var(--sans)', outline: 'none',
+          }}
+          onFocus={e => e.target.style.borderColor = 'var(--subtle)'}
+          onBlur={e => e.target.style.borderColor = 'var(--border)'}
+        />
+      </div>
 
-              <p className="text-center text-[11px] text-gray-400">
-                Your identity remains anonymous throughout the app.
-                <br />
-                Phone number is only used for verification.
-              </p>
-            </motion.div>
-          ) : (
-            <motion.div
-              key="otp"
-              initial={{ opacity: 0, x: 20 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: -20 }}
-              className="space-y-6"
-            >
-              <div>
-                <label className="text-xs font-bold uppercase tracking-widest text-gray-400 mb-2 block">
-                  Verification Code
-                </label>
-                <p className="text-xs text-gray-500 mb-4">
-                  Sent to {countryCode}{phone}
-                </p>
-                <div className="flex gap-2 justify-center">
-                  {otp.map((digit, i) => (
-                    <input
-                      key={i}
-                      ref={(el) => { otpRefs.current[i] = el; }}
-                      type="text"
-                      inputMode="numeric"
-                      maxLength={1}
-                      value={digit}
-                      onChange={(e) => handleOtpChange(i, e.target.value)}
-                      onKeyDown={(e) => handleOtpKeyDown(i, e)}
-                      className="w-12 h-14 text-center text-xl font-bold border border-gray-200 rounded-xl focus:border-black transition-colors"
-                    />
-                  ))}
-                </div>
-              </div>
+      {/* Error */}
+      {error && (
+        <div style={{ width: '100%', marginBottom: 16, fontSize: 12, color: '#cc2222', background: '#fff0f0', border: '1px solid #ffcccc', borderRadius: 8, padding: '10px 14px' }}>
+          {error}
+        </div>
+      )}
 
-              {error && (
-                <motion.p
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  className="text-xs text-red-500 font-medium text-center"
-                >
-                  {error}
-                </motion.p>
-              )}
+      {/* Submit */}
+      <button
+        onClick={handleSubmit}
+        disabled={loading}
+        style={{
+          width: '100%', padding: '14px', background: loading ? 'var(--mid)' : 'var(--pure)',
+          color: 'var(--black)', border: 'none', borderRadius: 12, fontSize: 14,
+          fontWeight: 700, fontFamily: 'var(--sans)', cursor: loading ? 'not-allowed' : 'pointer',
+          letterSpacing: 0.5, transition: 'all 0.2s', marginBottom: 16,
+        }}
+      >
+        {loading ? 'Please wait...' : mode === 'login' ? 'Sign In →' : 'Create Account →'}
+      </button>
 
-              <motion.button
-                whileTap={{ scale: 0.98 }}
-                onClick={handleVerifyOtp}
-                disabled={loading || otp.join('').length !== 6}
-                className="w-full py-3.5 bg-black text-white rounded-xl text-sm font-semibold disabled:opacity-40 transition-opacity"
-              >
-                {loading ? (
-                  <motion.span
-                    animate={{ opacity: [1, 0.5, 1] }}
-                    transition={{ repeat: Infinity, duration: 1.5 }}
-                  >
-                    Verifying...
-                  </motion.span>
-                ) : (
-                  'Verify & Continue'
-                )}
-              </motion.button>
-
-              <button
-                onClick={() => { setStep('phone'); setOtp(['', '', '', '', '', '']); setError(''); }}
-                className="w-full text-center text-xs text-gray-500 font-medium hover:text-black transition-colors"
-              >
-                Change phone number
-              </button>
-            </motion.div>
-          )}
-        </AnimatePresence>
-      </motion.div>
+      <p style={{ fontSize: 11, color: 'var(--muted)', textAlign: 'center', lineHeight: 1.6 }}>
+        Your identity stays anonymous throughout the app.<br />
+        Email is only used for authentication.
+      </p>
     </div>
   );
 }

@@ -1,333 +1,223 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
-import { useRouter } from 'next/navigation';
+import { useState, useRef, useCallback, useEffect } from 'react';
 import { useAuth } from '@/context/AuthContext';
-import { motion, AnimatePresence } from 'framer-motion';
-import { collection, query, where, getDocs, addDoc, doc, setDoc, getDoc, updateDoc, increment } from 'firebase/firestore';
-import { db } from '@/lib/firebase';
-import { UserProfile } from '@/lib/types';
-import SwipeCard from '@/components/SwipeCard';
-import BottomNav from '@/components/BottomNav';
-import { HiOutlineFilter, HiOutlineRefresh } from 'react-icons/hi';
+import { useRouter } from 'next/navigation';
 
-export default function SwipePage() {
-  const { user, profile, loading } = useAuth();
-  const router = useRouter();
-  const [profiles, setProfiles] = useState<UserProfile[]>([]);
-  const [currentIndex, setCurrentIndex] = useState(0);
-  const [loadingProfiles, setLoadingProfiles] = useState(true);
-  const [showMatch, setShowMatch] = useState<string | null>(null);
-  const [showFilters, setShowFilters] = useState(false);
-  const [filters, setFilters] = useState({
-    college: '',
-    skill: '',
-  });
+const MOCK_PROFILES = [
+  { id: 'p1', codename: "Swift Lynx", emoji: "༄", college: "VNR VJIET", type: "Student", about: "Building systems that break gracefully. Obsessed with distributed infra and coffee.", techSkills: ["Rust", "Kubernetes", "GraphQL", "Redis", "WebAssembly"], nonTechSkills: ["Technical Writing", "System Design", "Mentoring"], scores: { leetcode: 1842, codechef: 1654, github: 47, collaborations: 12 }, totalScore: 94 },
+  { id: 'p2', codename: "Neon Moth", emoji: "𐦍", college: "BITS Pilani Hyderabad", type: "Student", about: "ML researcher by day, hackathon goblin by night. I find patterns in chaos.", techSkills: ["PyTorch", "Python", "CUDA", "FastAPI", "React"], nonTechSkills: ["Research", "Public Speaking", "Design Thinking"], scores: { leetcode: 2100, codechef: 1887, github: 62, collaborations: 8 }, totalScore: 88 },
+  { id: 'p3', codename: "Marble Fox", emoji: "𓃦", college: "IIIT Hyderabad", type: "Student", about: "Security enthusiast. CTF player. I read RFCs for fun and that says a lot.", techSkills: ["C++", "Assembly", "Networking", "Cryptography", "Linux"], nonTechSkills: ["Problem Solving", "CTF Strategy", "Teaching"], scores: { leetcode: 1975, codechef: 1720, github: 38, collaborations: 15 }, totalScore: 91 },
+  { id: 'p4', codename: "Void Crane", emoji: "𓅠", college: "IIT Hyderabad", type: "Student", about: "Full-stack dev who's slowly becoming a devops person against my will.", techSkills: ["Next.js", "TypeScript", "PostgreSQL", "Docker", "AWS"], nonTechSkills: ["Project Management", "Client Communication", "UX Research"], scores: { leetcode: 1567, codechef: 1430, github: 29, collaborations: 20 }, totalScore: 78 },
+  { id: 'p5', codename: "Dusk Raven", emoji: "𓄿", college: "NIT Warangal", type: "Student", about: "Robotics and embedded systems. If it runs on metal, I want to program it.", techSkills: ["ROS", "C", "FPGA", "MATLAB", "Python"], nonTechSkills: ["Hardware Debugging", "Team Leadership", "Documentation"], scores: { leetcode: 1430, codechef: 1380, github: 55, collaborations: 9 }, totalScore: 82 },
+];
 
-  useEffect(() => {
-    if (!loading && !user) {
-      router.push('/auth');
-    }
-  }, [user, loading, router]);
+function SwipeCard({ profile, onSwipe, isTop, stackIndex }: any) {
+  const cardRef = useRef<HTMLDivElement>(null);
+  const startX = useRef(0); const startY = useRef(0);
+  const isDragging = useRef(false); const currentX = useRef(0);
+  const [dec, setDec] = useState({ left: 0, right: 0 });
 
-  const fetchProfiles = useCallback(async () => {
-    if (!user) return;
-    setLoadingProfiles(true);
-    try {
-      // Get already swiped profiles
-      const swipesSnap = await getDocs(
-        query(collection(db, 'swipes'), where('swiperId', '==', user.uid))
-      );
-      const swipedIds = new Set(swipesSnap.docs.map(d => d.data().swipedId));
-      swipedIds.add(user.uid); // exclude self
+  const onDown = useCallback((e: any) => {
+    if (!isTop) return;
+    isDragging.current = true;
+    startX.current = e.type === 'touchstart' ? e.touches[0].clientX : e.clientX;
+    startY.current = e.type === 'touchstart' ? e.touches[0].clientY : e.clientY;
+    if (cardRef.current) { cardRef.current.classList.add('dragging'); cardRef.current.style.transition = 'none'; }
+  }, [isTop]);
 
-      // Get all active profiles
-      const profilesSnap = await getDocs(
-        query(collection(db, 'users'), where('profileCompleted', '==', true), where('isActive', '==', true))
-      );
+  const onMove = useCallback((e: any) => {
+    if (!isDragging.current || !isTop) return;
+    const cx = e.type === 'touchmove' ? e.touches[0].clientX : e.clientX;
+    const cy = e.type === 'touchmove' ? e.touches[0].clientY : e.clientY;
+    const dx = cx - startX.current; const dy = cy - startY.current;
+    currentX.current = dx;
+    if (cardRef.current) cardRef.current.style.transform = `translateX(${dx}px) translateY(${dy * 0.3}px) rotate(${dx * 0.07}deg)`;
+    const t = 60;
+    if (dx > t) setDec({ left: 0, right: Math.min((dx - t) / 60, 1) });
+    else if (dx < -t) setDec({ left: Math.min((-dx - t) / 60, 1), right: 0 });
+    else setDec({ left: 0, right: 0 });
+  }, [isTop]);
 
-      let allProfiles = profilesSnap.docs
-        .map(d => d.data() as UserProfile)
-        .filter(p => !swipedIds.has(p.uid));
+  const onUp = useCallback(() => {
+    if (!isDragging.current || !isTop) return;
+    isDragging.current = false;
+    if (cardRef.current) { cardRef.current.classList.remove('dragging'); cardRef.current.style.transition = 'transform 0.4s cubic-bezier(0.4,0,0.2,1)'; }
+    const dx = currentX.current;
+    if (dx > 80) { if (cardRef.current) cardRef.current.style.transform = 'translateX(120%) rotate(20deg)'; setTimeout(() => onSwipe('right', profile.id), 350); }
+    else if (dx < -80) { if (cardRef.current) cardRef.current.style.transform = 'translateX(-120%) rotate(-20deg)'; setTimeout(() => onSwipe('left', profile.id), 350); }
+    else { if (cardRef.current) cardRef.current.style.transform = ''; setDec({ left: 0, right: 0 }); }
+    currentX.current = 0;
+  }, [isTop, profile.id, onSwipe]);
 
-      // Apply filters
-      if (filters.college) {
-        allProfiles = allProfiles.filter(p =>
-          p.college.toLowerCase().includes(filters.college.toLowerCase())
-        );
-      }
-      if (filters.skill) {
-        allProfiles = allProfiles.filter(p =>
-          [...p.techSkills, ...p.nonTechSkills].some(s =>
-            s.toLowerCase().includes(filters.skill.toLowerCase())
-          )
-        );
-      }
-
-      // Shuffle for personalized feed
-      allProfiles.sort(() => Math.random() - 0.5);
-      setProfiles(allProfiles);
-      setCurrentIndex(0);
-    } catch (error) {
-      console.error('Error fetching profiles:', error);
-    } finally {
-      setLoadingProfiles(false);
-    }
-  }, [user, filters]);
-
-  useEffect(() => {
-    if (user && profile) {
-      fetchProfiles();
-    }
-  }, [user, profile, fetchProfiles]);
-
-  const handleSwipe = async (direction: 'left' | 'right') => {
-    if (!user || !profile || currentIndex >= profiles.length) return;
-
-    const swipedProfile = profiles[currentIndex];
-
-    // Record the swipe
-    try {
-      await addDoc(collection(db, 'swipes'), {
-        swiperId: user.uid,
-        swipedId: swipedProfile.uid,
-        direction,
-        timestamp: new Date().toISOString(),
-      });
-
-      // If right swipe, check for mutual match
-      if (direction === 'right') {
-        const reverseSwipeSnap = await getDocs(
-          query(
-            collection(db, 'swipes'),
-            where('swiperId', '==', swipedProfile.uid),
-            where('swipedId', '==', user.uid),
-            where('direction', '==', 'right')
-          )
-        );
-
-        if (!reverseSwipeSnap.empty) {
-          // MUTUAL MATCH!
-          const chatId = [user.uid, swipedProfile.uid].sort().join('_');
-
-          // Create chat
-          await setDoc(doc(db, 'chats', chatId), {
-            id: chatId,
-            type: 'individual',
-            participants: [user.uid, swipedProfile.uid],
-            participantNames: {
-              [user.uid]: profile.codeName,
-              [swipedProfile.uid]: swipedProfile.codeName,
-            },
-            lastMessage: 'You matched! Start chatting.',
-            lastMessageAt: new Date().toISOString(),
-            createdAt: new Date().toISOString(),
-          });
-
-          // Create match record
-          await addDoc(collection(db, 'matches'), {
-            user1: user.uid,
-            user2: swipedProfile.uid,
-            user1CodeName: profile.codeName,
-            user2CodeName: swipedProfile.codeName,
-            chatId,
-            createdAt: new Date().toISOString(),
-          });
-
-          // Update collaboration counts
-          await updateDoc(doc(db, 'users', user.uid), {
-            collaborationCount: increment(1),
-          });
-          await updateDoc(doc(db, 'users', swipedProfile.uid), {
-            collaborationCount: increment(1),
-          });
-
-          // System message in chat
-          await addDoc(collection(db, 'messages'), {
-            chatId,
-            senderId: 'system',
-            senderCodeName: 'System',
-            text: `${profile.codeName} and ${swipedProfile.codeName} matched! Start collaborating.`,
-            timestamp: new Date().toISOString(),
-            type: 'system',
-          });
-
-          setShowMatch(swipedProfile.codeName);
-          setTimeout(() => setShowMatch(null), 3000);
-        }
-      }
-    } catch (error) {
-      console.error('Error recording swipe:', error);
-    }
-
-    // Move to next profile
-    setTimeout(() => {
-      setCurrentIndex(prev => prev + 1);
-    }, 300);
+  const buttonSwipe = (dir: 'left' | 'right') => {
+    if (!isTop || !cardRef.current) return;
+    cardRef.current.style.transition = 'transform 0.4s cubic-bezier(0.4,0,0.2,1)';
+    cardRef.current.style.transform = `translateX(${dir === 'right' ? 150 : -150}%) rotate(${dir === 'right' ? 20 : -20}deg)`;
+    setTimeout(() => onSwipe(dir, profile.id), 350);
   };
-
-  if (loading || !profile) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-white">
-        <motion.div
-          animate={{ rotate: 360 }}
-          transition={{ repeat: Infinity, duration: 1, ease: 'linear' }}
-          className="w-8 h-8 border-2 border-black border-t-transparent rounded-full"
-        />
-      </div>
-    );
-  }
+  profile._swipe = buttonSwipe;
 
   return (
-    <div className="min-h-screen bg-white pb-20">
-      {/* Header */}
-      <div className="sticky top-0 bg-white/90 backdrop-blur-lg z-10 border-b border-gray-100">
-        <div className="max-w-lg mx-auto px-6 py-4 flex items-center justify-between">
-          <div>
-            <h1 className="text-xl font-bold tracking-tight">Discover</h1>
-            <p className="text-xs text-gray-400 mt-0.5">Swipe to connect</p>
-          </div>
-          <div className="flex gap-2">
-            <motion.button
-              whileTap={{ scale: 0.9 }}
-              onClick={() => setShowFilters(!showFilters)}
-              className={`w-10 h-10 rounded-full flex items-center justify-center transition-colors ${
-                showFilters ? 'bg-black text-white' : 'border border-gray-200 hover:border-black'
-              }`}
-            >
-              <HiOutlineFilter className="text-lg" />
-            </motion.button>
-            <motion.button
-              whileTap={{ scale: 0.9 }}
-              onClick={fetchProfiles}
-              className="w-10 h-10 rounded-full border border-gray-200 flex items-center justify-center hover:border-black transition-colors"
-            >
-              <HiOutlineRefresh className="text-lg" />
-            </motion.button>
-          </div>
-        </div>
-
-        {/* Filters */}
-        <AnimatePresence>
-          {showFilters && (
-            <motion.div
-              initial={{ height: 0, opacity: 0 }}
-              animate={{ height: 'auto', opacity: 1 }}
-              exit={{ height: 0, opacity: 0 }}
-              className="overflow-hidden"
-            >
-              <div className="max-w-lg mx-auto px-6 pb-4 flex gap-2">
-                <input
-                  type="text"
-                  value={filters.college}
-                  onChange={(e) => setFilters({ ...filters, college: e.target.value })}
-                  placeholder="Filter by college"
-                  className="flex-1 px-3 py-2 bg-gray-50 rounded-lg text-xs focus:bg-white focus:ring-1 focus:ring-black transition-all"
-                />
-                <input
-                  type="text"
-                  value={filters.skill}
-                  onChange={(e) => setFilters({ ...filters, skill: e.target.value })}
-                  placeholder="Filter by skill"
-                  className="flex-1 px-3 py-2 bg-gray-50 rounded-lg text-xs focus:bg-white focus:ring-1 focus:ring-black transition-all"
-                />
-                <button
-                  onClick={fetchProfiles}
-                  className="px-4 py-2 bg-black text-white text-xs font-semibold rounded-lg"
-                >
-                  Apply
-                </button>
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
+    <div
+      ref={cardRef} className="swipe-card"
+      style={{ zIndex: 10 - stackIndex, transform: isTop ? '' : `scale(${1 - stackIndex * 0.04}) translateY(${stackIndex * 10}px)`, opacity: stackIndex > 2 ? 0 : 1, pointerEvents: isTop ? 'auto' : 'none' }}
+      onMouseDown={onDown} onMouseMove={onMove} onMouseUp={onUp}
+      onTouchStart={onDown} onTouchMove={onMove} onTouchEnd={onUp}
+    >
+      <div className="swipe-decision-left" style={{ opacity: dec.left }}>✗ PASS</div>
+      <div className="swipe-decision-right" style={{ opacity: dec.right }}>✓ CONNECT</div>
+      <div className="card-bg">
+        <div className="avatar-circle">{profile.emoji}</div>
+        <div className="codename-tag">{profile.codename}</div>
+        <div className="score-tag">⬡ {profile.totalScore}</div>
       </div>
-
-      {/* Swipe Area */}
-      <div className="max-w-lg mx-auto px-6 pt-4">
-        <div className="relative" style={{ height: 'calc(100dvh - 200px)' }}>
-          {loadingProfiles ? (
-            <div className="absolute inset-0 flex items-center justify-center">
-              <motion.div
-                animate={{ rotate: 360 }}
-                transition={{ repeat: Infinity, duration: 1, ease: 'linear' }}
-                className="w-8 h-8 border-2 border-black border-t-transparent rounded-full"
-              />
-            </div>
-          ) : currentIndex >= profiles.length ? (
-            <div className="absolute inset-0 flex flex-col items-center justify-center text-center">
-              <motion.div
-                initial={{ opacity: 0, scale: 0.8 }}
-                animate={{ opacity: 1, scale: 1 }}
-              >
-                <p className="text-6xl mb-4">🌊</p>
-                <p className="text-lg font-bold">No more profiles</p>
-                <p className="text-sm text-gray-400 mt-1">Check back later for new people</p>
-                <button
-                  onClick={fetchProfiles}
-                  className="mt-6 px-6 py-2.5 bg-black text-white rounded-full text-sm font-semibold"
-                >
-                  Refresh
-                </button>
-              </motion.div>
-            </div>
-          ) : (
-            <>
-              {/* Background card */}
-              {currentIndex + 1 < profiles.length && (
-                <SwipeCard
-                  key={profiles[currentIndex + 1].uid}
-                  profile={profiles[currentIndex + 1]}
-                  onSwipe={() => {}}
-                  isTop={false}
-                />
-              )}
-              {/* Top card */}
-              <SwipeCard
-                key={profiles[currentIndex].uid}
-                profile={profiles[currentIndex]}
-                onSwipe={handleSwipe}
-                isTop={true}
-              />
-            </>
-          )}
+      <div className="card-body">
+        <div className="card-college">{profile.college} · {profile.type}</div>
+        <div className="card-about">&quot;{profile.about}&quot;</div>
+        <div className="score-row">
+          <div className="score-item"><span className="score-num">{profile.scores.leetcode}</span><span className="score-lbl">LeetCode</span></div>
+          <div className="score-item"><span className="score-num">{profile.scores.codechef}</span><span className="score-lbl">CodeChef</span></div>
+          <div className="score-item"><span className="score-num">{profile.scores.github}</span><span className="score-lbl">GitHub★</span></div>
+          <div className="score-item"><span className="score-num">{profile.scores.collaborations}</span><span className="score-lbl">Collabs</span></div>
+        </div>
+        <div className="skills-section">
+          <div className="skills-label">Tech Skills</div>
+          <div className="skills-row">{profile.techSkills.map((s: string) => <span key={s} className="skill-chip">{s}</span>)}</div>
+        </div>
+        <div className="skills-section">
+          <div className="skills-label">Non-Tech</div>
+          <div className="skills-row">{profile.nonTechSkills.map((s: string) => <span key={s} className="skill-chip non-tech">{s}</span>)}</div>
         </div>
       </div>
+    </div>
+  );
+}
 
-      {/* Match Overlay */}
-      <AnimatePresence>
-        {showMatch && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 bg-black/80 flex items-center justify-center z-50"
-            onClick={() => setShowMatch(null)}
-          >
-            <motion.div
-              initial={{ scale: 0.5, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.5, opacity: 0 }}
-              transition={{ type: 'spring', stiffness: 300, damping: 20 }}
-              className="bg-white rounded-3xl p-8 mx-6 text-center"
-            >
-              <p className="text-5xl mb-4">🤝</p>
-              <h2 className="text-2xl font-black tracking-tight mb-2">It&apos;s a Match!</h2>
-              <p className="text-sm text-gray-500 mb-6">
-                You and <span className="font-bold text-black">{showMatch}</span> both want to collaborate
-              </p>
-              <button
-                onClick={() => { setShowMatch(null); router.push('/chat'); }}
-                className="w-full py-3 bg-black text-white rounded-xl text-sm font-semibold"
-              >
-                Start Chatting
-              </button>
-            </motion.div>
-          </motion.div>
+export default function SwipePage() {
+  const router = useRouter();
+  const { user } = useAuth();
+  const [profiles, setProfiles] = useState<any[]>([]);
+  const [fullList, setFullList] = useState<any[]>([]);
+  const [showMatch, setShowMatch] = useState<any>(null);
+
+  useEffect(() => {
+    const token = localStorage.getItem('waves_token');
+    if (!token) {
+      setProfiles(MOCK_PROFILES);
+      setFullList(MOCK_PROFILES);
+      return;
+    }
+
+    const loadUsers = async () => {
+      try {
+        const res = await fetch('/api/users', {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!res.ok) {
+          setProfiles(MOCK_PROFILES);
+          setFullList(MOCK_PROFILES);
+          return;
+        }
+        const { users } = await res.json();
+        const mapped = users.map((u: any) => ({
+          id: u.uid, codename: u.codeName || 'Anonymous',
+          emoji: u.codeName?.[0]?.toUpperCase() || '༄', college: u.college || 'Unknown',
+          type: u.isStudent ? 'Student' : 'Professional', about: u.aboutMe || 'No bio yet.',
+          techSkills: u.techSkills || [], nonTechSkills: u.nonTechSkills || [],
+          scores: {
+            leetcode: u.leetcode ? 100 : 0, codechef: u.codechef ? 100 : 0,
+            github: u.github ? 10 : 0, collaborations: u.collaborationCount || 0,
+          },
+          totalScore: u.score || 0,
+        }));
+        if (mapped.length > 0) {
+          setProfiles(mapped);
+          setFullList(mapped);
+        } else {
+          setProfiles(MOCK_PROFILES);
+          setFullList(MOCK_PROFILES);
+        }
+      } catch (err) {
+        console.warn('Swipe load error:', err);
+        setProfiles(MOCK_PROFILES);
+        setFullList(MOCK_PROFILES);
+      }
+    };
+
+    loadUsers();
+  }, [user]);
+
+  const handleSwipe = useCallback(async (dir: string, id: string) => {
+    setProfiles(prev => prev.filter((p: any) => p.id !== id));
+    if (user) {
+      const token = localStorage.getItem('waves_token');
+      if (token) {
+        try {
+          const res = await fetch('/api/swipes', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+            body: JSON.stringify({ swipedId: id, direction: dir }),
+          });
+          const data = await res.json();
+          if (data.matched) {
+            const matched = fullList.find((p: any) => p.id === id);
+            setTimeout(() => setShowMatch(matched), 400);
+          } else if (dir === 'right' && Math.random() > 0.6) {
+            // Demo visual match for seed users
+            const matched = fullList.find((p: any) => p.id === id);
+            setTimeout(() => setShowMatch(matched), 400);
+          }
+        } catch { /* graceful */ }
+      }
+    }
+  }, [user, fullList]);
+
+  const buttonSwipe = (dir: 'left' | 'right') => {
+    if (profiles.length === 0) return;
+    const top = profiles[0] as any;
+    if (top._swipe) top._swipe(dir);
+  };
+
+  return (
+    <div className="swipe-wrap">
+      <div className="swipe-top">
+        <div className="swipe-title"></div>
+        <div className="swipe-count"></div>
+      </div>
+      <div className="card-stack">
+        {profiles.length === 0 ? (
+          <div className="empty-swipe">
+            <div className="big-icon">🌙</div>
+            <p>You&apos;ve seen everyone<br />for now. Check back later.</p>
+            <button className="interested-btn" style={{ marginTop: 8 }} onClick={() => setProfiles([...fullList])}>Reset</button>
+          </div>
+        ) : (
+          profiles.slice(0, 3).map((p, i) => (
+            <SwipeCard key={p.id} profile={p} onSwipe={handleSwipe} isTop={i === 0} stackIndex={i} />
+          ))
         )}
-      </AnimatePresence>
-
-      <BottomNav />
+      </div>
+      {profiles.length > 0 && (
+        <div className="swipe-actions">
+          <button className="action-btn reject" onClick={() => buttonSwipe('left')}>✗</button>
+          <button className="action-btn skip" onClick={() => buttonSwipe('left')}>↩</button>
+          <button className="action-btn accept" onClick={() => buttonSwipe('right')}>✓</button>
+        </div>
+      )}
+      {showMatch && (
+        <div className="match-popup">
+          <div className="match-label">Connected</div>
+          <div className="match-sub">You and {showMatch.codename} can now collaborate</div>
+          <div className="match-avatars">
+            <div className="match-av">˙ᵕ˙</div>
+            <div className="match-x">×</div>
+            <div className="match-av">{showMatch.emoji}</div>
+          </div>
+          <button className="match-btn" onClick={() => { setShowMatch(null); router.push('/chat'); }}>Open Chat</button>
+          <button className="match-skip" onClick={() => setShowMatch(null)}>Maybe later</button>
+        </div>
+      )}
     </div>
   );
 }

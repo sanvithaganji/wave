@@ -1,210 +1,129 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useState, useEffect } from 'react';
 import { useAuth } from '@/context/AuthContext';
-import { signOut } from 'firebase/auth';
-import { auth, db } from '@/lib/firebase';
-import { doc, updateDoc, collection, query, where, getDocs } from 'firebase/firestore';
-import { motion } from 'framer-motion';
-import Avatar from '@/components/Avatar';
-import BottomNav from '@/components/BottomNav';
-import { HiOutlinePencil, HiOutlineLogout, HiOutlineShieldCheck, HiOutlineCalendar } from 'react-icons/hi';
+import { useRouter } from 'next/navigation';
+
+const MOCK = {
+  codename: "Swift Lynx", emoji: "༄", college: "VNR VJIET", type: "Student",
+  about: "Building systems that break gracefully. Obsessed with distributed infra and coffee.",
+  techSkills: ["Rust", "Kubernetes", "GraphQL", "Redis", "WebAssembly"],
+  nonTechSkills: ["Technical Writing", "System Design", "Mentoring"],
+  scores: { leetcode: 1842, codechef: 1654, github: 5, collaborations: 12 },
+  totalScore: 94,
+  activity: ['3 Hackathons', '2 Patents Filed', '5 Projects', '1 Paper', '4 Certs', 'CGPA 8.9'],
+  links: [
+    { icon: '</>', name: 'LeetCode', val: '1842 rating' },
+    { icon: '</>', name: 'CodeChef', val: '1654 rating' },
+    { icon: '</>', name: 'GitHub', val: '5 repos' },
+    { icon: 'in', name: 'LinkedIn', val: 'Connected' },
+    { icon: 'HR', name: 'HackerRank', val: '4★ Problem Solving' },
+  ],
+  joinDate: 'January 2025',
+};
 
 export default function ProfilePage() {
-  const { user, profile, loading } = useAuth();
+  const { user, profile, signOut } = useAuth();
   const router = useRouter();
-  const [projectCount, setProjectCount] = useState(0);
+  const [animated, setAnimated] = useState(false);
+  useEffect(() => { setTimeout(() => setAnimated(true), 100); }, []);
 
-  useEffect(() => {
-    if (!loading && !user) {
-      router.push('/auth');
-    }
-  }, [user, loading, router]);
+  // Use real profile if available, otherwise mock
+  const codename = profile?.codeName || MOCK.codename;
+  const emoji = codename[0]?.toUpperCase() || MOCK.emoji;
+  const college = profile?.college || MOCK.college;
+  const typeStr = profile ? (profile.isStudent ? 'Student' : 'Professional') : MOCK.type;
+  const about = profile?.aboutMe || MOCK.about;
+  const techSkills = (profile?.techSkills?.length ?? 0) > 0 ? profile!.techSkills : MOCK.techSkills;
+  const nonTech = (profile?.nonTechSkills?.length ?? 0) > 0 ? profile!.nonTechSkills : MOCK.nonTechSkills;
+  const score = profile?.score ?? MOCK.totalScore;
+  const collabs = profile?.collaborationCount ?? MOCK.scores.collaborations;
+  const github = profile?.github || `${MOCK.scores.github} repos`;
+  const joinDate = profile?.dateJoined ? new Date(profile.dateJoined).toLocaleDateString('en-US', { month: 'long', year: 'numeric' }) : MOCK.joinDate;
 
-  useEffect(() => {
-    const fetchProjectCount = async () => {
-      if (!user) return;
-      try {
-        const q = query(collection(db, 'projects'), where('ownerId', '==', user.uid));
-        const snap = await getDocs(q);
-        setProjectCount(snap.size);
-      } catch (error) {
-        console.error(error);
-      }
-    };
-    fetchProjectCount();
-  }, [user]);
+  const links = profile ? [
+    profile.leetcode && { icon: '</>', name: 'LeetCode', val: 'Connected' },
+    profile.codechef && { icon: '</>', name: 'CodeChef', val: 'Connected' },
+    profile.github && { icon: '</>', name: 'GitHub', val: 'Connected' },
+    profile.linkedin && { icon: 'in', name: 'LinkedIn', val: 'Connected' },
+    profile.hackerrank && { icon: 'HR', name: 'HackerRank', val: 'Connected' },
+  ].filter(Boolean) as any[] : MOCK.links;
 
-  const handleLogout = async () => {
-    await signOut(auth);
-    router.push('/auth');
-  };
-
-  if (loading || !profile) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-white">
-        <motion.div
-          animate={{ rotate: 360 }}
-          transition={{ repeat: Infinity, duration: 1, ease: 'linear' }}
-          className="w-8 h-8 border-2 border-black border-t-transparent rounded-full"
-        />
-      </div>
-    );
-  }
+  const activityTags = profile ? (() => {
+    const a: string[] = [];
+    if (profile.hackathons?.length) a.push(`${profile.hackathons.length} Hackathons`);
+    if (profile.patents > 0) a.push(`${profile.patents} Patents`);
+    if (profile.projects?.length) a.push(`${profile.projects.length} Projects`);
+    if (profile.papers > 0) a.push(`${profile.papers} Papers`);
+    if (profile.certifications?.length) a.push(`${profile.certifications.length} Certs`);
+    if (profile.cgpa > 0) a.push(`CGPA ${profile.cgpa}`);
+    return a.length > 0 ? a : ['New member'];
+  })() : MOCK.activity;
 
   return (
-    <div className="min-h-screen bg-white pb-20">
-      {/* Header */}
-      <div className="px-6 pt-12 pb-6 text-center">
-        <div className="flex justify-center mb-4">
-          <Avatar codeName={profile.codeName} size="xl" />
-        </div>
-        <h1 className="text-2xl font-bold tracking-tight">{profile.codeName}</h1>
-        <p className="text-xs text-gray-500 font-medium mt-1">
-          {profile.isStudent ? 'Student' : 'Professional'} · {profile.college}
-        </p>
-        <div className="flex items-center justify-center gap-3 mt-3">
-          <span className="text-xs bg-gray-100 px-3 py-1 rounded-full font-medium">
-            Rating: {profile.rating.toFixed(1)}
-          </span>
-          <span className="text-xs bg-gray-100 px-3 py-1 rounded-full font-medium">
-            Score: {profile.score}
-          </span>
-        </div>
-        <div className="flex items-center justify-center gap-1 mt-2 text-[10px] text-gray-400">
-          <HiOutlineCalendar />
-          <span>Joined {new Date(profile.dateJoined).toLocaleDateString()}</span>
+    <div className="profile-wrap">
+      <div className="profile-hero">
+        <div className="profile-avatar">{emoji}</div>
+        <div className="profile-codename">{codename}</div>
+        <div className="profile-type">{college} · {typeStr}</div>
+        <div className="profile-score-row">
+          <div className="ps-item"><span className="ps-num">{collabs}</span><span className="ps-lbl">Collabs</span></div>
+          <div className="ps-divider" />
+          <div className="ps-item"><span className="ps-num">{typeof github === 'number' ? github : MOCK.scores.github}</span><span className="ps-lbl">Rating★</span></div>
+          <div className="ps-divider" />
+          <div className="ps-item"><span className="ps-num">{score}</span><span className="ps-lbl">Score</span></div>
         </div>
       </div>
 
-      {/* About */}
-      <div className="px-6 mb-6">
-        <p className="text-sm text-gray-600 text-center italic">
-          &ldquo;{profile.aboutMe}&rdquo;
-        </p>
+      <div className="profile-section">
+        <div className="profile-section-title"><b>About</b></div>
+        <p style={{ fontSize: 13, color: 'var(--subtle)', lineHeight: 1.7, fontWeight: 300, fontStyle: 'italic' }}>&quot;{about}&quot;</p>
       </div>
 
-      {/* Stats Grid */}
-      <div className="px-6 mb-6">
-        <div className="grid grid-cols-4 gap-2">
-          {[
-            { label: 'Collabs', value: profile.collaborationCount },
-            { label: 'Hackathons', value: profile.hackathons.length },
-            { label: 'Projects', value: projectCount },
-            { label: 'CGPA', value: profile.cgpa },
-          ].map((stat, i) => (
-            <motion.div
-              key={i}
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: i * 0.1 }}
-              className="bg-gray-50 rounded-xl p-3 text-center"
-            >
-              <p className="text-xl font-bold">{stat.value}</p>
-              <p className="text-[10px] text-gray-500 font-medium">{stat.label}</p>
-            </motion.div>
-          ))}
-        </div>
+      <div className="profile-section">
+        <div className="profile-section-title"><b>Tech Skills</b></div>
+        <div className="tags-wrap">{techSkills.map((s: string, i: number) => <span key={i} className="profile-tag">{s}</span>)}</div>
       </div>
 
-      {/* Skills */}
-      <div className="px-6 mb-4">
-        <h3 className="text-xs font-bold uppercase tracking-widest text-gray-400 mb-2">Tech Skills</h3>
-        <div className="flex flex-wrap gap-1.5">
-          {profile.techSkills.map((skill, i) => (
-            <span key={i} className="px-3 py-1.5 bg-black text-white text-xs font-medium rounded-full">
-              {skill}
-            </span>
-          ))}
-        </div>
+      <div className="profile-section">
+        <div className="profile-section-title"><b>Non-Tech Skills</b></div>
+        <div className="tags-wrap">{nonTech.map((s: string, i: number) => <span key={i} className="profile-tag hollow">{s}</span>)}</div>
       </div>
 
-      <div className="px-6 mb-6">
-        <h3 className="text-xs font-bold uppercase tracking-widest text-gray-400 mb-2">Non-Tech Skills</h3>
-        <div className="flex flex-wrap gap-1.5">
-          {profile.nonTechSkills.map((skill, i) => (
-            <span key={i} className="px-3 py-1.5 border border-black text-xs font-medium rounded-full">
-              {skill}
-            </span>
-          ))}
-        </div>
-      </div>
-
-      {/* Detailed Info */}
-      <div className="px-6 mb-6 space-y-3">
-        {profile.competitions.length > 0 && (
-          <div>
-            <h3 className="text-xs font-bold uppercase tracking-widest text-gray-400 mb-1">Competitions</h3>
-            <p className="text-sm text-gray-600">{profile.competitions.join(', ')}</p>
-          </div>
-        )}
-        {profile.certifications.length > 0 && (
-          <div>
-            <h3 className="text-xs font-bold uppercase tracking-widest text-gray-400 mb-1">Certifications</h3>
-            <p className="text-sm text-gray-600">{profile.certifications.join(', ')}</p>
-          </div>
-        )}
-        {profile.internships.length > 0 && (
-          <div>
-            <h3 className="text-xs font-bold uppercase tracking-widest text-gray-400 mb-1">Internships</h3>
-            <p className="text-sm text-gray-600">{profile.internships.join(', ')}</p>
-          </div>
-        )}
-        {(profile.papers > 0 || profile.patents > 0) && (
-          <div className="flex gap-4">
-            {profile.papers > 0 && (
-              <div>
-                <h3 className="text-xs font-bold uppercase tracking-widest text-gray-400 mb-1">Papers</h3>
-                <p className="text-sm text-gray-600">{profile.papers}</p>
+      {links.length > 0 && (
+        <div className="profile-section">
+          <div className="profile-section-title"><b>Competitive Profiles</b></div>
+          <div className="portfolio-links">
+            {links.map((l: any) => (
+              <div className="portfolio-link" key={l.name}>
+                <span className="pl-icon">{l.icon}</span>
+                <span className="pl-name">{l.name}</span>
+                <span className="pl-val">{l.val}</span>
               </div>
-            )}
-            {profile.patents > 0 && (
-              <div>
-                <h3 className="text-xs font-bold uppercase tracking-widest text-gray-400 mb-1">Patents</h3>
-                <p className="text-sm text-gray-600">{profile.patents}</p>
-              </div>
-            )}
+            ))}
           </div>
-        )}
-      </div>
+        </div>
+      )}
 
-      {/* Hidden Portfolio Indicator */}
-      <div className="px-6 mb-6">
-        <div className="bg-gray-50 rounded-xl p-4 flex items-center gap-3">
-          <HiOutlineShieldCheck className="text-xl text-gray-400" />
-          <div>
-            <p className="text-xs font-bold">Hidden Portfolio</p>
-            <p className="text-[10px] text-gray-400">
-              {[profile.github, profile.linkedin, profile.codechef, profile.leetcode, profile.hackerrank].filter(Boolean).length} links connected
-            </p>
-          </div>
+      <div className="profile-section">
+        <div className="profile-section-title"><b>Activity</b></div>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+          {activityTags.map((a: string, i: number) => <span key={i} className="profile-tag">{a}</span>)}
         </div>
       </div>
 
-      {/* Actions */}
-      <div className="px-6 space-y-3">
-        <button
-          onClick={() => router.push('/projects/my')}
-          className="w-full flex items-center justify-center gap-2 py-3 bg-black text-white rounded-xl text-sm font-semibold"
-        >
-          <HiOutlineShieldCheck /> My Projects
-        </button>
-        <button
-          onClick={() => router.push('/profile/edit')}
-          className="w-full flex items-center justify-center gap-2 py-3 border border-gray-200 rounded-xl text-sm font-semibold hover:border-black transition-colors"
-        >
-          <HiOutlinePencil /> Edit Profile
-        </button>
-        <button
-          onClick={handleLogout}
-          className="w-full flex items-center justify-center gap-2 py-3 text-gray-400 text-sm font-medium hover:text-black transition-colors"
-        >
-          <HiOutlineLogout /> Sign Out
-        </button>
+      <div className="profile-section">
+        <div className="profile-section-title"><b>Member Since</b></div>
+        <p style={{ fontSize: 13, color: 'var(--subtle)' }}>{joinDate} · <span style={{ color: 'var(--light)' }}>Anonymous by default</span></p>
       </div>
 
-      <BottomNav />
+      <button className="edit-profile-btn" onClick={() => router.push('/profile/edit')}>Edit Profile</button>
+      {user && (
+        <button onClick={() => { signOut(); router.push('/auth'); }}
+          style={{ width: '100%', marginTop: 10, padding: '12px', background: 'none', border: '1px solid var(--border)', borderRadius: 12, color: 'var(--muted)', fontSize: 13, cursor: 'pointer', fontFamily: 'var(--sans)' }}>
+          Sign Out
+        </button>
+      )}
     </div>
   );
 }

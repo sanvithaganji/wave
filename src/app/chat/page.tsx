@@ -1,166 +1,183 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { useRouter } from 'next/navigation';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { useAuth } from '@/context/AuthContext';
-import { motion, AnimatePresence } from 'framer-motion';
-import { collection, query, where, onSnapshot, orderBy } from 'firebase/firestore';
-import { db } from '@/lib/firebase';
-import { Chat } from '@/lib/types';
-import BottomNav from '@/components/BottomNav';
-import Avatar from '@/components/Avatar';
-import { HiOutlineUserGroup, HiOutlineUser } from 'react-icons/hi';
-import { formatDistanceToNow } from 'date-fns';
 
-export default function ChatListPage() {
-  const { user, profile, loading } = useAuth();
-  const router = useRouter();
-  const [chats, setChats] = useState<Chat[]>([]);
-  const [activeTab, setActiveTab] = useState<'individual' | 'group'>('individual');
-  const [loadingChats, setLoadingChats] = useState(true);
+const MOCK_CHATS = [
+  {
+    id: 'c1', name: "Neon Moth", emoji: "𐦍", last: "can you push the backend changes?", time: "now", unread: 3, online: true, isGroup: false,
+    messages: [
+      { id: 1, text: "hey! we got matched, saw your Rust experience", sent: false, time: "10:02" },
+      { id: 2, text: "yeah! working on something with distributed systems, need a co-founder basically", sent: true, time: "10:04" },
+      { id: 3, text: "that's exactly what I'm looking for. what stack?", sent: false, time: "10:05" },
+      { id: 4, text: "Rust + Kafka + React. scalable realtime data pipeline", sent: true, time: "10:06" },
+      { id: 5, text: "can you push the backend changes?", sent: false, time: "10:45" },
+    ]
+  },
+  {
+    id: 'c2', name: "MediAssist AI Team", emoji: "⚕", last: "Dusk Raven: demo is tomorrow at 3pm", time: "2h", unread: 1, online: false, isGroup: true,
+    messages: [
+      { id: 1, text: "okay team, we need to finalize the offline mode feature", sent: false, time: "8:00", from: "Swift Lynx" },
+      { id: 2, text: "I'll handle the SQLite migration tonight", sent: true, time: "8:12" },
+      { id: 3, text: "great! UI polish is done btw, looks clean", sent: false, time: "8:15", from: "Marble Fox" },
+      { id: 4, text: "demo is tomorrow at 3pm", sent: false, time: "10:20", from: "Dusk Raven" },
+    ]
+  },
+];
 
-  useEffect(() => {
-    if (!loading && !user) {
-      router.push('/auth');
-    }
-  }, [user, loading, router]);
+export default function ChatPage() {
+  const { user, profile } = useAuth();
+  const [chats, setChats] = useState<any[]>(MOCK_CHATS);
+  const [localMsgs, setLocalMsgs] = useState<Record<string, any[]>>({});
+  const [openChat, setOpenChat] = useState<any>(null);
+  const [liveMessages, setLiveMessages] = useState<any[]>([]);
+  const [input, setInput] = useState('');
+  const [isApi, setIsApi] = useState(false);
+  const messagesEnd = useRef<HTMLDivElement>(null);
+  const pollRef = useRef<NodeJS.Timeout | null>(null);
 
+  // Load real chats from API
   useEffect(() => {
     if (!user) return;
-
-    const q = query(
-      collection(db, 'chats'),
-      where('participants', 'array-contains', user.uid)
-    );
-
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const chatList = snapshot.docs
-        .map(d => ({ id: d.id, ...d.data() } as Chat))
-        .sort((a, b) => new Date(b.lastMessageAt).getTime() - new Date(a.lastMessageAt).getTime());
-      setChats(chatList);
-      setLoadingChats(false);
-    });
-
-    return () => unsubscribe();
+    const token = localStorage.getItem('waves_token');
+    const loadChats = async () => {
+      try {
+        const res = await fetch('/api/chats', { headers: { Authorization: `Bearer ${token}` } });
+        if (!res.ok) return;
+        const { chats: apiChats } = await res.json();
+        if (!apiChats || apiChats.length === 0) return;
+        setIsApi(true);
+        const loaded = apiChats.map((c: any) => {
+          const isGroup = !!c.projectId;
+          const otherId = (c.participants || []).find((id: string) => id !== user.uid);
+          let name = 'Unknown', emoji = '?';
+          if (isGroup && c.projectName) { name = c.projectName; emoji = '👥'; }
+          else if (otherId && c.participantNames?.[otherId]) { name = c.participantNames[otherId]; emoji = name[0] || '?'; }
+          const timeStr = c.lastMessageAt ? new Date(c.lastMessageAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+          return { id: c.chatId || c._id, name, emoji, last: c.lastMessage || 'No messages yet', time: timeStr, isGroup, unread: 0, online: false };
+        });
+        setChats(loaded);
+      } catch { /* keep mock chats */ }
+    };
+    loadChats();
   }, [user]);
 
-  const filteredChats = chats.filter(c => c.type === activeTab);
+  // Poll messages when a chat is open
+  const fetchMessages = useCallback(async (chatId: string) => {
+    if (!isApi || !user) return;
+    const token = localStorage.getItem('waves_token');
+    try {
+      const res = await fetch(`/api/chats/${chatId}/messages`, { headers: { Authorization: `Bearer ${token}` } });
+      if (!res.ok) return;
+      const { messages } = await res.json();
+      const msgs = (messages || []).map((m: any) => ({
+        id: m._id, text: m.text, sent: m.senderId === user.uid,
+        time: new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        from: m.senderCodeName,
+      }));
+      setLiveMessages(msgs);
+      setTimeout(() => messagesEnd.current?.scrollIntoView({ behavior: 'smooth' }), 100);
+    } catch { /* graceful */ }
+  }, [isApi, user]);
 
-  const getChatName = (chat: Chat) => {
-    if (chat.type === 'group') {
-      return chat.projectName || 'Group Chat';
+  useEffect(() => {
+    if (openChat && isApi) {
+      fetchMessages(openChat.id);
+      pollRef.current = setInterval(() => fetchMessages(openChat.id), 3000);
     }
-    // For individual chats, show the other person's codeName
-    if (!user) return 'Chat';
-    const otherNames = Object.entries(chat.participantNames)
-      .filter(([uid]) => uid !== user.uid)
-      .map(([, name]) => name);
-    return otherNames[0] || 'Unknown';
+    return () => { if (pollRef.current) clearInterval(pollRef.current); };
+  }, [openChat, isApi, fetchMessages]);
+
+  useEffect(() => {
+    if (openChat) setTimeout(() => messagesEnd.current?.scrollIntoView(), 100);
+  }, [openChat]);
+
+  const getMessages = () => {
+    if (!openChat) return [];
+    if (isApi) return liveMessages;
+    return localMsgs[openChat.id] || openChat.messages || [];
   };
 
-  if (loading || !profile) {
+  const sendMessage = async () => {
+    if (!input.trim() || !openChat) return;
+    const text = input.trim(); setInput('');
+    if (isApi && user) {
+      const token = localStorage.getItem('waves_token');
+      try {
+        await fetch(`/api/chats/${openChat.id}/messages`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ text }),
+        });
+        fetchMessages(openChat.id);
+      } catch { }
+    } else {
+      const newMsg = { id: Date.now(), text, sent: true, time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) };
+      setLocalMsgs(prev => ({ ...prev, [openChat.id]: [...(prev[openChat.id] || openChat.messages || []), newMsg] }));
+      setTimeout(() => messagesEnd.current?.scrollIntoView({ behavior: 'smooth' }), 100);
+    }
+  };
+
+  const handleKey = (e: React.KeyboardEvent<HTMLInputElement>) => { if (e.key === 'Enter') sendMessage(); };
+
+  if (openChat) {
+    const msgs = getMessages();
     return (
-      <div className="min-h-screen flex items-center justify-center bg-white">
-        <motion.div
-          animate={{ rotate: 360 }}
-          transition={{ repeat: Infinity, duration: 1, ease: 'linear' }}
-          className="w-8 h-8 border-2 border-black border-t-transparent rounded-full"
-        />
+      <div className="chat-view">
+        <div className="chat-view-header">
+          <button className="back-btn" onClick={() => setOpenChat(null)}>←</button>
+          <div className="chat-avatar" style={{ width: 38, height: 38, fontSize: 16, borderRadius: openChat.isGroup ? '10px' : '50%' }}>{openChat.emoji}</div>
+          <div className="chat-view-info">
+            <div className="chat-view-name">{openChat.name}</div>
+            <div className="chat-view-status">{openChat.isGroup ? 'Group · tap to call' : openChat.online ? '● Online' : 'Last seen recently'}</div>
+          </div>
+          <div className="chat-view-actions">
+            <button className="call-btn">📞</button>
+            <button className="call-btn">📷</button>
+          </div>
+        </div>
+        <div className="messages-area">
+          {msgs.map((m: any) => (
+            <div key={m.id} className={`msg ${m.sent ? 'sent' : 'recv'}`}>
+              {!m.sent && openChat.isGroup && m.from && <div style={{ fontSize: 10, color: 'var(--muted)', marginBottom: 4, fontWeight: 600 }}>{m.from}</div>}
+              {m.text}
+              <div className="msg-time">{m.time}</div>
+            </div>
+          ))}
+          {msgs.length === 0 && <div style={{ color: 'var(--muted)', fontSize: 13, textAlign: 'center', paddingTop: 20 }}>No messages yet. Say hi! 👋</div>}
+          <div ref={messagesEnd} />
+        </div>
+        <div className="chat-input-row">
+          <input className="chat-input" placeholder="Message..." value={input} onChange={e => setInput(e.target.value)} onKeyDown={handleKey} />
+          <button className="send-btn" onClick={sendMessage}>➤</button>
+        </div>
       </div>
     );
   }
 
+  const dm = chats.filter(c => !c.isGroup);
+  const groups = chats.filter(c => c.isGroup);
+
   return (
-    <div className="min-h-screen bg-white pb-20">
-      {/* Header */}
-      <div className="sticky top-0 bg-white/90 backdrop-blur-lg z-10 border-b border-gray-100">
-        <div className="max-w-lg mx-auto px-6 py-4">
-          <h1 className="text-xl font-bold tracking-tight">Messages</h1>
-          <p className="text-xs text-gray-400 mt-0.5">{chats.length} conversations</p>
+    <div className="chat-wrap slide-up">
+      <h2 className="section-title" style={{ marginBottom: 16 }}>Messages</h2>
+      <div className="chat-section-title">Direct Messages</div>
+      {dm.map(c => (
+        <div key={c.id} className="chat-item" onClick={() => setOpenChat(c)}>
+          <div className="chat-avatar">{c.emoji}<div className={`online-dot ${c.online ? 'active' : ''}`} /></div>
+          <div className="chat-info"><div className="chat-name">{c.name}</div><div className="chat-preview">{c.last}</div></div>
+          <div className="chat-meta"><div className="chat-time">{c.time}</div>{c.unread > 0 && <div className="unread-badge">{c.unread}</div>}</div>
         </div>
-
-        {/* Tabs */}
-        <div className="max-w-lg mx-auto px-6 pb-3 flex gap-2">
-          <button
-            onClick={() => setActiveTab('individual')}
-            className={`flex items-center gap-1.5 px-4 py-2 rounded-full text-xs font-semibold transition-all ${
-              activeTab === 'individual'
-                ? 'bg-black text-white'
-                : 'bg-gray-100 text-gray-500'
-            }`}
-          >
-            <HiOutlineUser className="text-sm" />
-            Personal
-          </button>
-          <button
-            onClick={() => setActiveTab('group')}
-            className={`flex items-center gap-1.5 px-4 py-2 rounded-full text-xs font-semibold transition-all ${
-              activeTab === 'group'
-                ? 'bg-black text-white'
-                : 'bg-gray-100 text-gray-500'
-            }`}
-          >
-            <HiOutlineUserGroup className="text-sm" />
-            Groups
-          </button>
+      ))}
+      <div className="divider" />
+      <div className="chat-section-title">Group Chats</div>
+      {groups.map(c => (
+        <div key={c.id} className="chat-item" onClick={() => setOpenChat(c)}>
+          <div className="chat-avatar group">{c.emoji}</div>
+          <div className="chat-info"><div className="chat-name">{c.name}</div><div className="chat-preview">{c.last}</div></div>
+          <div className="chat-meta"><div className="chat-time">{c.time}</div>{c.unread > 0 && <div className="unread-badge">{c.unread}</div>}</div>
         </div>
-      </div>
-
-      {/* Chat List */}
-      <div className="max-w-lg mx-auto overflow-y-auto" style={{ maxHeight: 'calc(100dvh - 180px)' }}>
-        {loadingChats ? (
-          <div className="flex justify-center py-12">
-            <motion.div
-              animate={{ rotate: 360 }}
-              transition={{ repeat: Infinity, duration: 1, ease: 'linear' }}
-              className="w-6 h-6 border-2 border-black border-t-transparent rounded-full"
-            />
-          </div>
-        ) : filteredChats.length === 0 ? (
-          <div className="text-center py-16">
-            <p className="text-4xl mb-3">{activeTab === 'individual' ? '💬' : '👥'}</p>
-            <p className="text-sm text-gray-400">
-              {activeTab === 'individual'
-                ? 'No conversations yet. Swipe to match!'
-                : 'No group chats yet. Join a project!'}
-            </p>
-          </div>
-        ) : (
-          <AnimatePresence>
-            {filteredChats.map((chat, i) => {
-              const chatName = getChatName(chat);
-              return (
-                <motion.button
-                  key={chat.id}
-                  initial={{ opacity: 0, x: -10 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  transition={{ delay: i * 0.05 }}
-                  onClick={() => router.push(`/chat/${chat.id}`)}
-                  className="w-full flex items-center gap-3 px-6 py-4 hover:bg-gray-50 transition-colors text-left border-b border-gray-50"
-                >
-                  <Avatar
-                    codeName={chatName}
-                    size={chat.type === 'group' ? 'lg' : 'md'}
-                  />
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center justify-between">
-                      <h3 className="text-sm font-semibold truncate">{chatName}</h3>
-                      <span className="text-[10px] text-gray-400 ml-2 flex-shrink-0">
-                        {formatDistanceToNow(new Date(chat.lastMessageAt), { addSuffix: false })}
-                      </span>
-                    </div>
-                    <p className="text-xs text-gray-400 truncate mt-0.5">
-                      {chat.lastMessage}
-                    </p>
-                  </div>
-                </motion.button>
-              );
-            })}
-          </AnimatePresence>
-        )}
-      </div>
-
-      <BottomNav />
+      ))}
     </div>
   );
 }

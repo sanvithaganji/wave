@@ -1,21 +1,9 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import { useAuth } from '@/context/AuthContext';
 import { motion, AnimatePresence } from 'framer-motion';
-import {
-  collection,
-  query,
-  where,
-  onSnapshot,
-  addDoc,
-  doc,
-  getDoc,
-  updateDoc,
-  orderBy,
-} from 'firebase/firestore';
-import { db } from '@/lib/firebase';
 import { Chat, Message } from '@/lib/types';
 import Avatar from '@/components/Avatar';
 import { HiOutlineArrowLeft, HiOutlinePhone, HiOutlineVideoCamera, HiOutlinePaperAirplane } from 'react-icons/hi';
@@ -40,62 +28,48 @@ export default function ChatRoomPage() {
   }, [user, loading, router]);
 
   // Fetch chat info
-  useEffect(() => {
+  const loadChat = useCallback(async () => {
     if (!chatId) return;
-    const fetchChat = async () => {
-      const chatDoc = await getDoc(doc(db, 'chats', chatId));
-      if (chatDoc.exists()) {
-        setChat({ id: chatDoc.id, ...chatDoc.data() } as Chat);
-      }
-    };
-    fetchChat();
+    const token = localStorage.getItem('waves_token');
+    try {
+      const res = await fetch(`/api/chats/${chatId}`, { headers: { Authorization: `Bearer ${token}` } });
+      if (res.ok) { const data = await res.json(); setChat(data.chat); }
+    } catch { /* graceful */ }
   }, [chatId]);
 
-  // Listen for messages
+  useEffect(() => { loadChat(); }, [loadChat]);
+
+  // Poll messages
+  const loadMessages = useCallback(async () => {
+    if (!chatId || !user) return;
+    const token = localStorage.getItem('waves_token');
+    try {
+      const res = await fetch(`/api/chats/${chatId}/messages`, { headers: { Authorization: `Bearer ${token}` } });
+      if (!res.ok) return;
+      const { messages: msgs } = await res.json();
+      setMessages(msgs || []);
+      setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
+    } catch { /* graceful */ }
+  }, [chatId, user]);
+
   useEffect(() => {
-    if (!chatId) return;
-
-    const q = query(
-      collection(db, 'messages'),
-      where('chatId', '==', chatId),
-      orderBy('timestamp', 'asc')
-    );
-
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const msgs = snapshot.docs.map(d => ({
-        id: d.id,
-        ...d.data(),
-      } as Message));
-      setMessages(msgs);
-      // Scroll to bottom
-      setTimeout(() => {
-        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-      }, 100);
-    });
-
-    return () => unsubscribe();
-  }, [chatId]);
+    loadMessages();
+    const interval = setInterval(loadMessages, 3000);
+    return () => clearInterval(interval);
+  }, [loadMessages]);
 
   const handleSend = async () => {
     if (!newMessage.trim() || !user || !profile || !chatId) return;
     setSending(true);
-
+    const token = localStorage.getItem('waves_token');
     try {
-      await addDoc(collection(db, 'messages'), {
-        chatId,
-        senderId: user.uid,
-        senderCodeName: profile.codeName,
-        text: newMessage.trim(),
-        timestamp: new Date().toISOString(),
-        type: 'text',
+      await fetch(`/api/chats/${chatId}/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ text: newMessage.trim() }),
       });
-
-      await updateDoc(doc(db, 'chats', chatId), {
-        lastMessage: newMessage.trim(),
-        lastMessageAt: new Date().toISOString(),
-      });
-
       setNewMessage('');
+      loadMessages();
       inputRef.current?.focus();
     } catch (error) {
       console.error('Error sending message:', error);

@@ -32,6 +32,17 @@ export interface UserProfile {
   isActive: boolean;
   isStudent: boolean;
   profileCompleted: boolean;
+  interviewCompleted?: boolean;
+  // AI-extracted fields from conversational onboarding
+  workingStyle?: {
+    pace?: 'hackathon' | 'short-term' | 'long-term';
+    collaboration?: 'sync' | 'async' | 'mixed';
+    leadership?: 'lead' | 'follow' | 'either';
+    risk?: 'low' | 'medium' | 'high';
+  };
+  domains?: string[];
+  availabilityHours?: number;
+  keywords?: string[];
 }
 
 export interface Report {

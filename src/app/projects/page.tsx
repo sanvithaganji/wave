@@ -1,492 +1,197 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { useRouter } from 'next/navigation';
+import { useState, useEffect, useRef } from 'react';
 import { useAuth } from '@/context/AuthContext';
-import { motion, AnimatePresence } from 'framer-motion';
-import { collection, query, where, getDocs, doc, updateDoc, arrayUnion, addDoc } from 'firebase/firestore';
-import { db } from '@/lib/firebase';
-import { Project, CATEGORIES, DOMAINS, ProjectCategory, ProjectDomain } from '@/lib/types';
-import BottomNav from '@/components/BottomNav';
-import ProjectCard from '@/components/ProjectCard';
-import { HiOutlinePlus, HiOutlineArrowLeft, HiOutlineFilter, HiOutlineSearch } from 'react-icons/hi';
+import { useRouter } from 'next/navigation';
 
-type View = 'categories' | 'projects' | 'create';
+const MOCK_PROJECTS = [
+  { id: 'm1', name: "MediAssist AI", type: "software", domain: "healthcare", badge: "Hackathon", desc: "AI-powered symptom checker for rural clinics using offline-first architecture and multilingual NLP models.", tags: ["AI/ML", "Healthcare", "React Native", "Python"], owner: "Swift Lynx", members: 2, maxMembers: 4 },
+  { id: 'm2', name: "FarmLink Protocol", type: "hardware", domain: "farming", badge: "Research", desc: "Mesh IoT network for real-time crop monitoring. Sensors communicate via LoRa and surface data to farmers via WhatsApp.", tags: ["IoT", "LoRa", "Hardware", "Agri-tech"], owner: "Neon Moth", members: 3, maxMembers: 5 },
+  { id: 'm3', name: "TrailSync", type: "software", domain: "travel", badge: "Startup", desc: "Collaborative trip planning with AI itinerary optimization. Think Notion meets Google Maps meets a travel agent.", tags: ["React", "Maps API", "Travel", "SaaS"], owner: "Marble Fox", members: 1, maxMembers: 3 },
+  { id: 'm4', name: "SporeNet", type: "software", domain: "food", badge: "Competition", desc: "Decentralized food expiry tracker connecting restaurants with NGOs to minimize food waste in urban zones.", tags: ["Web3", "Food Tech", "Node.js", "MongoDB"], owner: "Void Crane", members: 2, maxMembers: 4 },
+  { id: 'm5', name: "SecureCampus Shield", type: "hardware", domain: "safety", badge: "Hackathon", desc: "Smart surveillance overlay using edge-ML to detect anomalous behavior without storing personal footage.", tags: ["CV", "Edge ML", "Privacy", "Hardware"], owner: "Dusk Raven", members: 1, maxMembers: 3 },
+  { id: 'm6', name: "GreenByte", type: "non-technical", domain: "sustainability", badge: "Event", desc: "Annual sustainability hackathon organizing committee. Need designers, social media leads, and logistics leads.", tags: ["Event", "Sustainability", "Non-Tech", "Organising"], owner: "Swift Lynx", members: 4, maxMembers: 8 },
+];
+
+const DOMAINS = [
+  { key: "healthcare", label: "Healthcare", icon: "✙" },
+  { key: "farming", label: "Farming", icon: "☘︎" },
+  { key: "travel", label: "Travel", icon: "✈︎" },
+  { key: "food", label: "Food Tech", icon: "♨" },
+  { key: "education", label: "Education", icon: "✎" },
+  { key: "sustainability", label: "Sustainability", icon: "𖣘" },
+  { key: "fintech", label: "FinTech", icon: "$" },
+  { key: "safety", label: "Safety", icon: "⛨" },
+  { key: "web3", label: "Web3", icon: "⬡" },
+  { key: "ai-ml", label: "AI / ML", icon: "✦" },
+  { key: "iot", label: "IoT", icon: "⚙" },
+  { key: "entertainment", label: "Entertainment", icon: "🎮" },
+];
 
 export default function ProjectsPage() {
-  const { user, profile, loading } = useAuth();
+  const { user } = useAuth();
   const router = useRouter();
-  const [view, setView] = useState<View>('categories');
-  const [selectedCategory, setSelectedCategory] = useState<ProjectCategory | null>(null);
-  const [selectedDomain, setSelectedDomain] = useState<ProjectDomain | null>(null);
-  const [projects, setProjects] = useState<Project[]>([]);
-  const [loadingProjects, setLoadingProjects] = useState(false);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [interestedProjects, setInterestedProjects] = useState<Set<string>>(new Set());
 
-  // Create project form
-  const [newProject, setNewProject] = useState({
-    name: '',
-    description: '',
-    abstract: '',
-    tags: '',
-    category: 'software' as ProjectCategory,
-    domain: 'healthcare' as ProjectDomain,
-    isHackathon: false,
-    isCompetition: false,
-    teamSize: 4,
-  });
-  const [creating, setCreating] = useState(false);
+  const [projects, setProjects] = useState<any[]>([]);
+  const [selectedTypes, setSelectedTypes] = useState<string[]>([]);
+  const [selectedDomains, setSelectedDomains] = useState<string[]>([]);
+  const [view, setView] = useState<'categories' | 'feed'>('categories');
+  const [interested, setInterested] = useState<Record<string, boolean>>({});
+  const [toast, setToast] = useState<string | null>(null);
+  const toastTimer = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
-    if (!loading && !user) {
-      router.push('/auth');
-    }
-  }, [user, loading, router]);
+    const token = localStorage.getItem('waves_token');
 
-  const fetchProjects = async (category?: ProjectCategory, domain?: ProjectDomain) => {
-    setLoadingProjects(true);
-    try {
-      let q;
-      if (category && domain) {
-        q = query(
-          collection(db, 'projects'),
-          where('category', '==', category),
-          where('domain', '==', domain),
-          where('status', '==', 'open')
-        );
-      } else if (category) {
-        q = query(
-          collection(db, 'projects'),
-          where('category', '==', category),
-          where('status', '==', 'open')
-        );
-      } else {
-        q = query(collection(db, 'projects'), where('status', '==', 'open'));
-      }
-      const snap = await getDocs(q);
-      const projectList = snap.docs.map(d => ({ id: d.id, ...d.data() } as Project));
-      setProjects(projectList);
-
-      // Find which projects user already expressed interest in
-      if (user) {
-        const interested = new Set<string>();
-        projectList.forEach(p => {
-          if (p.interestedUsers.includes(user.uid)) {
-            interested.add(p.id);
-          }
+    const loadProjects = async () => {
+      try {
+        const res = await fetch('/api/projects', {
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
         });
-        setInterestedProjects(interested);
-      }
-    } catch (error) {
-      console.error('Error fetching projects:', error);
-    } finally {
-      setLoadingProjects(false);
+        if (!res.ok) return;
+        const { projects: raw } = await res.json();
+        const live = raw.map((p: any) => ({
+          id: p._id || p.id, name: p.name, type: p.category, domain: p.domain,
+          badge: p.isHackathon ? 'Hackathon' : p.isCompetition ? 'Competition' : 'Open Source',
+          desc: p.description, tags: p.tags || [], owner: p.ownerCodeName,
+          members: (p.approvedUsers || []).length, maxMembers: p.teamSize || 4,
+          ownerId: p.ownerId, interestedUsers: p.interestedUsers || [],
+        })).filter((p: any) => p.members < p.maxMembers);
+
+        if (live.length > 0) {
+          setProjects(live);
+          if (user) {
+            const init: Record<string, boolean> = {};
+            live.forEach((p: any) => {
+              if (p.interestedUsers?.includes(user.uid) || p.ownerId === user.uid) init[p.id] = true;
+            });
+            setInterested(init);
+          }
+        }
+      } catch (err) { console.warn('Projects load error:', err); }
+    };
+
+    loadProjects();
+  }, [user]);
+
+  const showToast = (msg: string) => {
+    setToast(msg);
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToast(null), 2100);
+  };
+
+  const toggleType = (t: string) => setSelectedTypes(prev => prev.includes(t) ? prev.filter(x => x !== t) : [...prev, t]);
+  const toggleDomain = (d: string) => setSelectedDomains(prev => prev.includes(d) ? prev.filter(x => x !== d) : [...prev, d]);
+
+  const filtered = projects.filter(p => {
+    const typeOk = selectedTypes.length === 0 || selectedTypes.includes(p.type);
+    const domainOk = selectedDomains.length === 0 || selectedDomains.includes(p.domain);
+    return typeOk && domainOk;
+  });
+
+  const sendInterest = async (projectId: string) => {
+    setInterested(prev => ({ ...prev, [projectId]: true }));
+    showToast("Interest sent! Owner will be notified 📬");
+    if (user) {
+      const token = localStorage.getItem('waves_token');
+      try {
+        await fetch(`/api/projects/${projectId}/interest`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        });
+      } catch { /* graceful */ }
     }
   };
 
-  const handleCategorySelect = (category: ProjectCategory) => {
-    setSelectedCategory(category);
-  };
-
-  const handleDomainSelect = (domain: ProjectDomain) => {
-    setSelectedDomain(domain);
-    fetchProjects(selectedCategory!, domain);
-    setView('projects');
-  };
-
-  const handleShowAll = () => {
-    if (selectedCategory) {
-      fetchProjects(selectedCategory);
-      setView('projects');
-    }
-  };
-
-  const handleInterested = async (projectId: string) => {
-    if (!user) return;
-    try {
-      await updateDoc(doc(db, 'projects', projectId), {
-        interestedUsers: arrayUnion(user.uid),
-      });
-      setInterestedProjects(prev => new Set(prev).add(projectId));
-    } catch (error) {
-      console.error('Error marking interest:', error);
-    }
-  };
-
-  const handleCreateProject = async () => {
-    if (!user || !profile) return;
-    setCreating(true);
-    try {
-      const projectData = {
-        ownerId: user.uid,
-        ownerCodeName: profile.codeName,
-        name: newProject.name,
-        description: newProject.description,
-        abstract: newProject.abstract,
-        tags: newProject.tags.split(',').map(t => t.trim()).filter(Boolean),
-        category: newProject.category,
-        domain: newProject.domain,
-        isHackathon: newProject.isHackathon,
-        isCompetition: newProject.isCompetition,
-        interestedUsers: [],
-        approvedUsers: [user.uid],
-        teamSize: newProject.teamSize,
-        createdAt: new Date().toISOString(),
-        status: 'open',
-      };
-      await addDoc(collection(db, 'projects'), projectData);
-      setView('categories');
-      setNewProject({
-        name: '', description: '', abstract: '', tags: '',
-        category: 'software', domain: 'healthcare',
-        isHackathon: false, isCompetition: false, teamSize: 4,
-      });
-    } catch (error) {
-      console.error('Error creating project:', error);
-    } finally {
-      setCreating(false);
-    }
-  };
-
-  const filteredProjects = projects.filter(p =>
-    p.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    p.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    p.tags.some(t => t.toLowerCase().includes(searchQuery.toLowerCase()))
-  );
-
-  if (loading) {
+  if (view === 'feed') {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-white">
-        <motion.div
-          animate={{ rotate: 360 }}
-          transition={{ repeat: Infinity, duration: 1, ease: 'linear' }}
-          className="w-8 h-8 border-2 border-black border-t-transparent rounded-full"
-        />
-      </div>
+      <>
+        <div className="projects-wrap slide-up">
+          <div className="feed-header">
+            <button className="back-btn" onClick={() => setView('categories')}>← Back</button>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <span className="filter-chip">{filtered.length} projects</span>
+              <button
+                className="interested-btn"
+                style={{ padding: '6px 14px', fontSize: 13, borderRadius: 10, fontFamily: 'var(--sans)' }}
+                onClick={() => router.push('/projects/create')}
+              >+ New</button>
+            </div>
+          </div>
+          <h2 className="section-title">Projects</h2>
+          <p className="section-sub">Tap &quot;Interested&quot; to request to join</p>
+          {filtered.map(p => (
+            <button key={p.id} className="project-card" onClick={() => router.push(`/projects/${p.id}`)}>
+              <div className="pc-top">
+                <div className="pc-name">{p.name}</div>
+                <div className={`pc-badge ${p.badge === 'Hackathon' ? 'hackathon' : ''}`}>{p.badge}</div>
+              </div>
+              <div className="pc-desc">{p.desc}</div>
+              <div className="pc-tags">{p.tags.map((t: string) => <span key={t} className="pc-tag">{t}</span>)}</div>
+              <div className="pc-footer">
+                <div className="pc-meta">by {p.owner} · {p.members}/{p.maxMembers} members</div>
+                <span
+                  className={`interested-btn ${interested[p.id] ? 'sent' : ''}`}
+                  onClick={e => { e.stopPropagation(); if (!interested[p.id]) sendInterest(p.id); }}
+                >
+                  {interested[p.id] ? '✓ Sent' : 'Interested'}
+                </span>
+              </div>
+            </button>
+          ))}
+        </div>
+        {toast && <div className="toast">{toast}</div>}
+      </>
     );
   }
 
   return (
-    <div className="min-h-screen bg-white pb-20">
-      <AnimatePresence mode="wait">
-        {/* Categories View */}
-        {view === 'categories' && (
-          <motion.div
-            key="categories"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="page-transition"
+    <>
+      <div className="projects-wrap slide-up">
+        <h2 className="section-title">Explore <span>Projects</span></h2>
+        <p className="section-sub">Filter by type and domain to find your next collab</p>
+
+        <div className="type-grid">
+          {[
+            { key: 'software', label: 'Software' },
+            { key: 'hardware', label: 'Hardware' },
+            { key: 'non-technical', label: 'Non-Tech' },
+          ].map(t => (
+            <div key={t.key} className={`type-card ${selectedTypes.includes(t.key) ? 'active' : ''}`} onClick={() => toggleType(t.key)}>
+              <div className="icon" />
+              <div className="label">{t.label}</div>
+            </div>
+          ))}
+        </div>
+
+        <div className="domain-label">Domains</div>
+        <div className="domain-grid">
+          {DOMAINS.map(d => (
+            <div key={d.key} className={`domain-card ${selectedDomains.includes(d.key) ? 'active' : ''}`} onClick={() => toggleDomain(d.key)}>
+              <span className="di">{d.icon}</span>
+              <span className="dn">{d.label}</span>
+            </div>
+          ))}
+        </div>
+
+        <div style={{ display: 'flex', gap: 12 }}>
+          <button
+            className="interested-btn"
+            style={{ flex: 1, padding: '14px', fontSize: '14px', borderRadius: '12px', fontFamily: 'var(--sans)' }}
+            onClick={() => setView('feed')}
           >
-            {/* Header */}
-            <div className="sticky top-0 bg-white/90 backdrop-blur-lg z-10 border-b border-gray-100">
-              <div className="max-w-lg mx-auto px-6 py-4 flex items-center justify-between">
-                <div>
-                  <h1 className="text-xl font-bold tracking-tight">Projects</h1>
-                  <p className="text-xs text-gray-400 mt-0.5">Find or create collaborations</p>
-                </div>
-                <motion.button
-                  whileTap={{ scale: 0.95 }}
-                  onClick={() => setView('create')}
-                  className="w-10 h-10 bg-black text-white rounded-full flex items-center justify-center"
-                >
-                  <HiOutlinePlus className="text-lg" />
-                </motion.button>
-              </div>
-            </div>
-
-            <div className="max-w-lg mx-auto px-6 py-6 overflow-y-auto" style={{ maxHeight: 'calc(100dvh - 130px)' }}>
-              {/* Category Section */}
-              <div className="mb-8">
-                <h2 className="text-xs font-bold uppercase tracking-widest text-gray-400 mb-3">Type</h2>
-                <div className="grid grid-cols-1 gap-3">
-                  {CATEGORIES.map((cat, i) => (
-                    <motion.button
-                      key={cat.value}
-                      initial={{ opacity: 0, y: 10 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      transition={{ delay: i * 0.1 }}
-                      whileTap={{ scale: 0.98 }}
-                      onClick={() => handleCategorySelect(cat.value)}
-                      className={`w-full text-left p-5 rounded-2xl border transition-all ${
-                        selectedCategory === cat.value
-                          ? 'border-black bg-black text-white'
-                          : 'border-gray-200 hover:border-gray-400'
-                      }`}
-                    >
-                      <div className="flex items-center gap-3">
-                        <span className="text-2xl">{cat.icon}</span>
-                        <div>
-                          <p className="font-semibold">{cat.label}</p>
-                          <p className={`text-xs mt-0.5 ${selectedCategory === cat.value ? 'text-gray-300' : 'text-gray-400'}`}>
-                            {cat.value === 'software' && 'Web, Mobile, AI/ML, Blockchain'}
-                            {cat.value === 'hardware' && 'IoT, Robotics, Embedded Systems'}
-                            {cat.value === 'non-technical' && 'Events, Marketing, Research'}
-                          </p>
-                        </div>
-                      </div>
-                    </motion.button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Domain Section - only show after category selection */}
-              {selectedCategory && (
-                <motion.div
-                  initial={{ opacity: 0, y: 20 }}
-                  animate={{ opacity: 1, y: 0 }}
-                >
-                  <div className="flex items-center justify-between mb-3">
-                    <h2 className="text-xs font-bold uppercase tracking-widest text-gray-400">Domain</h2>
-                    <button
-                      onClick={handleShowAll}
-                      className="text-xs font-medium text-black underline"
-                    >
-                      Show all
-                    </button>
-                  </div>
-                  <div className="grid grid-cols-2 gap-3">
-                    {DOMAINS.map((domain, i) => (
-                      <motion.button
-                        key={domain.value}
-                        initial={{ opacity: 0, y: 10 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        transition={{ delay: i * 0.05 }}
-                        whileTap={{ scale: 0.98 }}
-                        onClick={() => handleDomainSelect(domain.value)}
-                        className="p-4 rounded-xl border border-gray-200 text-left hover:border-black transition-all"
-                      >
-                        <span className="text-xl mb-2 block">{domain.icon}</span>
-                        <p className="text-sm font-semibold">{domain.label}</p>
-                      </motion.button>
-                    ))}
-                  </div>
-                </motion.div>
-              )}
-            </div>
-          </motion.div>
-        )}
-
-        {/* Projects List View */}
-        {view === 'projects' && (
-          <motion.div
-            key="projects"
-            initial={{ opacity: 0, x: 20 }}
-            animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: -20 }}
+            Browse Projects →
+          </button>
+          <button
+            className="interested-btn"
+            style={{ padding: '14px 20px', fontSize: '14px', borderRadius: '12px', fontFamily: 'var(--sans)' }}
+            onClick={() => router.push('/projects/create')}
           >
-            {/* Header */}
-            <div className="sticky top-0 bg-white/90 backdrop-blur-lg z-10 border-b border-gray-100">
-              <div className="max-w-lg mx-auto px-6 py-4">
-                <div className="flex items-center gap-3 mb-3">
-                  <button
-                    onClick={() => { setView('categories'); setSelectedDomain(null); }}
-                    className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-gray-100 transition-colors"
-                  >
-                    <HiOutlineArrowLeft className="text-lg" />
-                  </button>
-                  <div>
-                    <h1 className="text-lg font-bold tracking-tight capitalize">
-                      {selectedCategory} {selectedDomain ? `· ${selectedDomain}` : ''}
-                    </h1>
-                    <p className="text-xs text-gray-400">{filteredProjects.length} projects</p>
-                  </div>
-                </div>
-                {/* Search */}
-                <div className="relative">
-                  <HiOutlineSearch className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400" />
-                  <input
-                    type="text"
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    placeholder="Search projects..."
-                    className="w-full pl-10 pr-4 py-2.5 bg-gray-50 rounded-xl text-sm focus:bg-white focus:ring-1 focus:ring-black transition-all"
-                  />
-                </div>
-              </div>
-            </div>
-
-            <div className="max-w-lg mx-auto px-6 py-4 overflow-y-auto" style={{ maxHeight: 'calc(100dvh - 160px)' }}>
-              {loadingProjects ? (
-                <div className="flex justify-center py-12">
-                  <motion.div
-                    animate={{ rotate: 360 }}
-                    transition={{ repeat: Infinity, duration: 1, ease: 'linear' }}
-                    className="w-6 h-6 border-2 border-black border-t-transparent rounded-full"
-                  />
-                </div>
-              ) : filteredProjects.length === 0 ? (
-                <div className="text-center py-12">
-                  <p className="text-gray-400 text-sm">No projects found</p>
-                  <p className="text-gray-300 text-xs mt-1">Be the first to create one!</p>
-                </div>
-              ) : (
-                filteredProjects.map((project) => (
-                  <ProjectCard
-                    key={project.id}
-                    project={project}
-                    onInterested={() => handleInterested(project.id)}
-                    isInterested={interestedProjects.has(project.id)}
-                  />
-                ))
-              )}
-            </div>
-          </motion.div>
-        )}
-
-        {/* Create Project View */}
-        {view === 'create' && (
-          <motion.div
-            key="create"
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -20 }}
-          >
-            {/* Header */}
-            <div className="sticky top-0 bg-white/90 backdrop-blur-lg z-10 border-b border-gray-100">
-              <div className="max-w-lg mx-auto px-6 py-4 flex items-center gap-3">
-                <button
-                  onClick={() => setView('categories')}
-                  className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-gray-100 transition-colors"
-                >
-                  <HiOutlineArrowLeft className="text-lg" />
-                </button>
-                <h1 className="text-lg font-bold tracking-tight">New Project</h1>
-              </div>
-            </div>
-
-            <div className="max-w-lg mx-auto px-6 py-6 space-y-5 overflow-y-auto pb-32" style={{ maxHeight: 'calc(100dvh - 80px)' }}>
-              <div>
-                <label className="text-xs font-bold uppercase tracking-widest text-gray-400 mb-1.5 block">
-                  Project Name
-                </label>
-                <input
-                  type="text"
-                  value={newProject.name}
-                  onChange={(e) => setNewProject({ ...newProject, name: e.target.value })}
-                  placeholder="My Awesome Project"
-                  className="w-full px-4 py-3 border border-gray-200 rounded-xl text-sm focus:border-black transition-colors"
-                />
-              </div>
-
-              <div>
-                <label className="text-xs font-bold uppercase tracking-widest text-gray-400 mb-1.5 block">
-                  Description
-                </label>
-                <textarea
-                  value={newProject.description}
-                  onChange={(e) => setNewProject({ ...newProject, description: e.target.value })}
-                  placeholder="What is this project about?"
-                  rows={3}
-                  className="w-full px-4 py-3 border border-gray-200 rounded-xl text-sm focus:border-black transition-colors resize-none"
-                />
-              </div>
-
-              <div>
-                <label className="text-xs font-bold uppercase tracking-widest text-gray-400 mb-1.5 block">
-                  Problem Statement / Abstract
-                </label>
-                <textarea
-                  value={newProject.abstract}
-                  onChange={(e) => setNewProject({ ...newProject, abstract: e.target.value })}
-                  placeholder="The problem you're solving..."
-                  rows={3}
-                  className="w-full px-4 py-3 border border-gray-200 rounded-xl text-sm focus:border-black transition-colors resize-none"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="text-xs font-bold uppercase tracking-widest text-gray-400 mb-1.5 block">
-                    Category
-                  </label>
-                  <select
-                    value={newProject.category}
-                    onChange={(e) => setNewProject({ ...newProject, category: e.target.value as ProjectCategory })}
-                    className="w-full px-4 py-3 border border-gray-200 rounded-xl text-sm focus:border-black transition-colors bg-white"
-                  >
-                    {CATEGORIES.map(c => (
-                      <option key={c.value} value={c.value}>{c.label}</option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="text-xs font-bold uppercase tracking-widest text-gray-400 mb-1.5 block">
-                    Domain
-                  </label>
-                  <select
-                    value={newProject.domain}
-                    onChange={(e) => setNewProject({ ...newProject, domain: e.target.value as ProjectDomain })}
-                    className="w-full px-4 py-3 border border-gray-200 rounded-xl text-sm focus:border-black transition-colors bg-white"
-                  >
-                    {DOMAINS.map(d => (
-                      <option key={d.value} value={d.value}>{d.label}</option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-
-              <div>
-                <label className="text-xs font-bold uppercase tracking-widest text-gray-400 mb-1.5 block">
-                  Tags (comma separated)
-                </label>
-                <input
-                  type="text"
-                  value={newProject.tags}
-                  onChange={(e) => setNewProject({ ...newProject, tags: e.target.value })}
-                  placeholder="React, Machine Learning, IoT"
-                  className="w-full px-4 py-3 border border-gray-200 rounded-xl text-sm focus:border-black transition-colors"
-                />
-              </div>
-
-              <div>
-                <label className="text-xs font-bold uppercase tracking-widest text-gray-400 mb-1.5 block">
-                  Team Size
-                </label>
-                <input
-                  type="number"
-                  value={newProject.teamSize}
-                  onChange={(e) => setNewProject({ ...newProject, teamSize: parseInt(e.target.value) || 2 })}
-                  min={2}
-                  max={20}
-                  className="w-full px-4 py-3 border border-gray-200 rounded-xl text-sm focus:border-black transition-colors"
-                />
-              </div>
-
-              <div className="flex gap-3">
-                <button
-                  onClick={() => setNewProject({ ...newProject, isHackathon: !newProject.isHackathon })}
-                  className={`flex-1 py-3 rounded-xl text-sm font-semibold transition-all ${
-                    newProject.isHackathon ? 'bg-black text-white' : 'border border-gray-200 text-gray-500'
-                  }`}
-                >
-                  Hackathon
-                </button>
-                <button
-                  onClick={() => setNewProject({ ...newProject, isCompetition: !newProject.isCompetition })}
-                  className={`flex-1 py-3 rounded-xl text-sm font-semibold transition-all ${
-                    newProject.isCompetition ? 'bg-black text-white' : 'border border-gray-200 text-gray-500'
-                  }`}
-                >
-                  Competition
-                </button>
-              </div>
-
-              <motion.button
-                whileTap={{ scale: 0.98 }}
-                onClick={handleCreateProject}
-                disabled={creating || !newProject.name || !newProject.description}
-                className="w-full py-3.5 bg-black text-white rounded-xl text-sm font-semibold disabled:opacity-40 transition-opacity"
-              >
-                {creating ? 'Creating...' : 'Create Project'}
-              </motion.button>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      <BottomNav />
-    </div>
+            + New
+          </button>
+        </div>
+      </div>
+      {toast && <div className="toast">{toast}</div>}
+    </>
   );
 }

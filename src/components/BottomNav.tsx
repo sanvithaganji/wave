@@ -1,54 +1,41 @@
 'use client';
 
 import { usePathname, useRouter } from 'next/navigation';
-import { motion } from 'framer-motion';
-import { HiOutlineViewGrid, HiOutlineSwitchHorizontal, HiOutlineChat, HiOutlineUser } from 'react-icons/hi';
 
 const tabs = [
-  { href: '/projects', icon: HiOutlineViewGrid, label: 'Projects' },
-  { href: '/swipe', icon: HiOutlineSwitchHorizontal, label: 'Discover' },
-  { href: '/chat', icon: HiOutlineChat, label: 'Chat' },
-  { href: '/profile', icon: HiOutlineUser, label: 'Profile' },
+  {
+    key: 'projects', href: '/projects', label: 'Projects',
+    icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="3" y="3" width="7" height="7" rx="1" /><rect x="14" y="3" width="7" height="7" rx="1" /><rect x="14" y="14" width="7" height="7" rx="1" /><rect x="3" y="14" width="7" height="7" rx="1" /></svg>
+  },
+  {
+    key: 'swipe', href: '/swipe', label: 'Discover',
+    icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M12 3C8 3 4 6 4 10c0 5 8 11 8 11s8-6 8-11c0-4-4-7-8-7z" /></svg>
+  },
+  {
+    key: 'interview', href: '/interview', label: 'Scout',
+    icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M12 2a5 5 0 1 0 0 10A5 5 0 0 0 12 2z" /><path d="M12 14c-5 0-8 2.5-8 4v1h16v-1c0-1.5-3-4-8-4z" /><path d="M17 9l2 2 4-4" /></svg>
+  },
+  {
+    key: 'chat', href: '/chat', label: 'Chat',
+    icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" /></svg>
+  },
+  {
+    key: 'profile', href: '/profile', label: 'Profile',
+    icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" /><circle cx="12" cy="7" r="4" /></svg>
+  },
 ];
 
 export default function BottomNav() {
   const pathname = usePathname();
   const router = useRouter();
-
   return (
-    <nav className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-100 safe-bottom z-50">
-      <div className="max-w-lg mx-auto flex items-center justify-around h-16">
-        {tabs.map((tab) => {
-          const isActive = pathname.startsWith(tab.href);
-          return (
-            <button
-              key={tab.href}
-              onClick={() => router.push(tab.href)}
-              className="relative flex flex-col items-center justify-center w-16 h-full transition-all duration-200"
-            >
-              {isActive && (
-                <motion.div
-                  layoutId="activeTab"
-                  className="absolute top-0 left-1/2 -translate-x-1/2 w-8 h-0.5 bg-black rounded-full"
-                  transition={{ type: 'spring', stiffness: 500, damping: 30 }}
-                />
-              )}
-              <tab.icon
-                className={`text-2xl transition-all duration-200 ${
-                  isActive ? 'text-black' : 'text-gray-400'
-                }`}
-              />
-              <span
-                className={`text-[10px] mt-1 font-medium transition-all duration-200 ${
-                  isActive ? 'text-black' : 'text-gray-400'
-                }`}
-              >
-                {tab.label}
-              </span>
-            </button>
-          );
-        })}
-      </div>
-    </nav>
+    <div className="bottom-nav">
+      {tabs.map(t => (
+        <button key={t.key} className={`nav-item ${pathname.startsWith(t.href) ? 'active' : ''}`} onClick={() => router.push(t.href)}>
+          {t.icon}
+          <span className="nav-label">{t.label}</span>
+        </button>
+      ))}
+    </div>
   );
 }

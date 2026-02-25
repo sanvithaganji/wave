@@ -4,8 +4,7 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/context/AuthContext';
 import { motion } from 'framer-motion';
-import { collection, query, where, getDocs } from 'firebase/firestore';
-import { db } from '@/lib/firebase';
+
 import { Project } from '@/lib/types';
 import BottomNav from '@/components/BottomNav';
 import { HiOutlineArrowLeft, HiOutlineExclamationCircle, HiOutlineUserGroup } from 'react-icons/hi';
@@ -26,21 +25,15 @@ export default function MyProjectsPage() {
   useEffect(() => {
     const fetchMyProjects = async () => {
       if (!user) return;
+      const token = localStorage.getItem('waves_token');
       try {
-        // Projects I own
-        const ownedSnap = await getDocs(
-          query(collection(db, 'projects'), where('ownerId', '==', user.uid))
-        );
-        setOwnedProjects(ownedSnap.docs.map(d => ({ id: d.id, ...d.data() } as Project)));
-
-        // Projects I've joined
-        const joinedSnap = await getDocs(
-          query(collection(db, 'projects'), where('approvedUsers', 'array-contains', user.uid))
-        );
-        const joined = joinedSnap.docs
-          .map(d => ({ id: d.id, ...d.data() } as Project))
-          .filter(p => p.ownerId !== user.uid);
-        setJoinedProjects(joined);
+        const res = await fetch('/api/projects/my', {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!res.ok) throw new Error('Failed');
+        const { owned, joined } = await res.json();
+        setOwnedProjects(owned || []);
+        setJoinedProjects(joined || []);
       } catch (error) {
         console.error('Error fetching projects:', error);
       } finally {
