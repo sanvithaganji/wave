@@ -7,3 +7,7 @@ firestore-debug.log
 
 tsconfig.tsbuildinfo
 .DS_Store
+
+.next/
+.vercel/
+
